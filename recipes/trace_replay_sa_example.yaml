@@ -1,0 +1,176 @@
+# Example recipe for the trace-replay-sa benchmark.
+# Replays the SemiAnalysis cc-traces-weka (no-subagents) public dataset, pulled
+# from HuggingFace by aiperf via --public-dataset, as a chat workload.
+#
+# The SemiAnalysis public-dataset loaders are NOT in stock aiperf; they live in
+# cquil11/aiperf@cjq/agentx-v0.3, so aiperf_package below pins that branch.
+#
+# Resources/backend below are copied from recipes/v1_isl_cost/dummy.yaml (a known
+# valid 1P1D Kimi/TRTLLM config) so the recipe validates end-to-end; swap them for
+# your real topology before submitting.
+name: trace_replay_sa_tep4x1p_tep4x1d
+identity:
+  model:
+    repo: nvidia/Kimi-K2.5-NVFP4
+    revision: e4e908c073784de20ad3af0be653421f1088922d
+  frameworks:
+    dynamo: 1.2.0
+    tensorrt_llm: 1.3.0rc16
+
+model:
+  path: kimi-k25-nvfp4
+  container: dyn-121-trtllm-rc16-condp-v1-isl
+  precision: fp4
+
+resources:
+  gpu_type: gb200
+  prefill_nodes: 1  ### 1p1d to keep allocation fast
+  prefill_workers: 1
+  gpus_per_prefill: 4
+  decode_nodes: 1
+  decode_workers: 1
+  gpus_per_decode: 4
+  gpus_per_node: 4
+slurm:
+  time_limit: "00:17:30"
+backend:
+  type: trtllm
+  prefill_environment:
+    TRTLLM_ENABLE_PDL: '1'
+    NCCL_GRAPH_MIXING_SUPPORT: '0'
+    TRTLLM_TRY_ZCOPY_FOR_KVCACHE_TRANSFER: '1'
+    TRTLLM_KVCACHE_TRANSFER_BUFFER_SIZE: 0B
+    DYN_TOOL_CALL_PARSER: kimi_k2
+    DYN_REASONING_PARSER: kimi_k25
+  decode_environment:
+    TRTLLM_ENABLE_PDL: '1'
+    NCCL_GRAPH_MIXING_SUPPORT: '0'
+    ENABLE_CONFIGURABLE_MOE: '1'
+    TLLM_SPEC_DECODE_FORCE_NUM_ACCEPTED_TOKENS: '2'
+    TRTLLM_KVCACHE_TRANSFER_BUFFER_SIZE: 0B
+    TRTLLM_TRY_ZCOPY_FOR_KVCACHE_TRANSFER: '1'
+    DYN_TOOL_CALL_PARSER: kimi_k2
+    DYN_REASONING_PARSER: kimi_k25
+  trtllm_config:
+    prefill:
+      load_format: DUMMY
+      cache_transceiver_config:
+        backend: UCX
+        max_tokens_in_buffer: 0
+        kv_transfer_sender_future_timeout_ms: 30000
+      allreduce_strategy: MNNVL
+      max_batch_size: 4
+      max_num_tokens: 8192
+      enable_chunked_prefill: true
+      max_seq_len: 200000
+      tensor_parallel_size: 4
+      moe_expert_parallel_size: 4
+      enable_attention_dp: false
+      pipeline_parallel_size: 1
+      num_postprocess_workers: 4
+      print_iter_log: true
+      stream_interval: 100
+      trust_remote_code: true
+      cuda_graph_config: null
+      disable_overlap_scheduler: true
+      moe_config:
+        backend: TRTLLM
+      kv_cache_config:
+        enable_block_reuse: true
+        free_gpu_memory_fraction: 0.6
+        iteration_stats_interval: 1
+        dtype: fp8
+        tokens_per_block: 32
+      speculative_config:
+        decoding_type: Eagle
+        max_draft_len: 3
+        allow_advanced_sampling: true
+        speculative_model_dir: /speculative-model
+    decode:
+      load_format: DUMMY
+      allreduce_strategy: MNNVL
+      cache_transceiver_config:
+        backend: UCX
+        max_tokens_in_buffer: 0
+        kv_transfer_sender_future_timeout_ms: 30000
+      max_num_tokens: 6400
+      enable_chunked_prefill: true
+      cuda_graph_config:
+        batch_sizes:
+        - 1
+        - 2
+        - 4
+        - 8
+        - 16
+        enable_padding: true
+      enable_attention_dp: false
+      kv_cache_config:
+        dtype: fp8
+        enable_block_reuse: true
+        free_gpu_memory_fraction: 0.75
+        tokens_per_block: 32
+      max_batch_size: 16
+      moe_config:
+        backend: CUTLASS
+        use_low_precision_moe_combine: true
+      moe_expert_parallel_size: 4
+      nvfp4_gemm_config:
+        allowed_backends:
+        - cutlass
+        - cublaslt
+        - cuda_core
+      num_postprocess_workers: 8
+      print_iter_log: true
+      stream_interval: 10
+      tensor_parallel_size: 4
+      trust_remote_code: true
+      speculative_config:
+        decoding_type: Eagle3
+        max_draft_len: 3
+        allow_advanced_sampling: true
+        speculative_model_dir: /speculative-model
+
+frontend:
+  type: dynamo
+  args:
+    router-mode: kv
+    router-reset-states: true
+    router-conditional-prefill: true
+    router-conditional-prefill-policy: isl_bounding
+    router-conditional-prefill-eff-isl-threshold: "4096"
+    router-conditional-prefill-eff-isl-ratio-threshold: 0.80
+  enable_multiple_frontends: false
+health_check:
+  max_attempts: 500
+  interval_seconds: 10
+
+dynamo:
+  install: false
+
+infra:
+  etcd_nats_dedicated_node: false
+  nats_max_payload_mb: 24
+
+extra_mount:
+  - "/lustre/fsw/coreai_dlfw_dev/karenc/models/Kimi-K2.5-Thinking-Eagle3:/speculative-model"
+
+benchmark:
+  type: trace-replay-sa
+  public_dataset: semianalysis_cc_traces_weka_with_subagents_256k
+  num_dataset_entries: 470  # full corpus of the with-subagents 256k variant (470 traces)
+  concurrencies: "24"
+  ttft_threshold_ms: 5000
+  itl_threshold_ms: 10
+  # The SA public-dataset loaders only exist on the cquil11/aiperf fork (branch cjq/agentx-v0.3).
+  # Pinned to the branch tip (2026-06-02): adds the with_subagents / 256k loaders plus
+  # weka_trace reconstruction + server-metrics fixes.
+  aiperf_package: "git+https://github.com/cquil11/aiperf.git@062a5de92c8ac8a0a6dd5d2a7fb9a539a147f3d9"
+  aiperf_args:
+    benchmark-duration: 300 # 5min for dummy
+    benchmark-grace-period: 30
+    request-timeout-seconds: 1200
+    workers-max: 200
+    record-processors: 8
+    profile-export-level: raw
+    concurrency-ramp-duration: 60
+    export-http-trace: true

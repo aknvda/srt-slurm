@@ -1,0 +1,668 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Tests for benchmark runners."""
+
+import pytest
+
+from srtctl.benchmarks import get_runner, list_benchmarks
+from srtctl.benchmarks.base import SCRIPTS_DIR
+
+
+class TestBenchmarkRegistry:
+    """Test benchmark runner registry."""
+
+    def test_list_benchmarks(self):
+        """All expected benchmarks are registered."""
+        benchmarks = list_benchmarks()
+        assert "sa-bench" in benchmarks
+        assert "sglang-bench" in benchmarks
+        assert "mmlu" in benchmarks
+        assert "gpqa" in benchmarks
+        assert "longbenchv2" in benchmarks
+        assert "router" in benchmarks
+
+    def test_get_runner_valid(self):
+        """Can get runner for valid benchmark type."""
+        runner = get_runner("sa-bench")
+        assert runner.name == "SA-Bench"
+        assert "sa-bench" in runner.script_path
+
+    def test_get_runner_invalid(self):
+        """Raises ValueError for unknown benchmark type."""
+        with pytest.raises(ValueError, match="Unknown benchmark type"):
+            get_runner("nonexistent-benchmark")
+
+
+class TestSABenchRunner:
+    """Test SA-Bench runner."""
+
+    def test_validate_config_missing_isl(self):
+        """Validates that isl is required."""
+        from srtctl.benchmarks.sa_bench import SABenchRunner
+        from srtctl.core.schema import (
+            BenchmarkConfig,
+            ModelConfig,
+            ResourceConfig,
+            SrtConfig,
+        )
+
+        runner = SABenchRunner()
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="h100"),
+            benchmark=BenchmarkConfig(type="sa-bench", osl=1024, concurrencies="4x8"),
+        )
+        errors = runner.validate_config(config)
+        assert any("isl" in e for e in errors)
+
+    def test_validate_config_valid(self):
+        """Valid config passes validation."""
+        from srtctl.benchmarks.sa_bench import SABenchRunner
+        from srtctl.core.schema import (
+            BenchmarkConfig,
+            ModelConfig,
+            ResourceConfig,
+            SrtConfig,
+        )
+
+        runner = SABenchRunner()
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="h100"),
+            benchmark=BenchmarkConfig(type="sa-bench", isl=1024, osl=1024, concurrencies="4x8"),
+        )
+        errors = runner.validate_config(config)
+        assert errors == []
+
+
+class TestSGLangBenchRunner:
+    """Test SGLang-Bench runner."""
+
+    def test_validate_config_valid(self):
+        from srtctl.benchmarks.sglang_bench import SGLangBenchRunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = SGLangBenchRunner()
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="h100"),
+            benchmark=BenchmarkConfig(type="sglang-bench", isl=1024, osl=1024, concurrencies="4x8", req_rate="inf"),
+        )
+        errors = runner.validate_config(config)
+        assert errors == []
+
+    def test_validate_config_missing_fields(self):
+        from srtctl.benchmarks.sglang_bench import SGLangBenchRunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = SGLangBenchRunner()
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="h100"),
+            benchmark=BenchmarkConfig(type="sglang-bench"),
+        )
+        errors = runner.validate_config(config)
+        assert any("benchmark.isl is required" in e for e in errors)
+        assert any("benchmark.osl is required" in e for e in errors)
+        assert any("benchmark.concurrencies is required" in e for e in errors)
+
+    def test_validate_config_rejects_zero_values(self):
+        from srtctl.benchmarks.sglang_bench import SGLangBenchRunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = SGLangBenchRunner()
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="h100"),
+            benchmark=BenchmarkConfig(type="sglang-bench", isl=0, osl=1, concurrencies=[0], req_rate=0),
+        )
+        errors = runner.validate_config(config)
+        assert any("benchmark.isl must be a positive integer" in e for e in errors)
+        assert any("benchmark.concurrencies values must be positive integers" in e for e in errors)
+        assert any(
+            "benchmark.req_rate must be a positive integer" in e or "benchmark.req_rate must be a positive number" in e
+            for e in errors
+        )
+
+    def test_build_command(self):
+        from unittest.mock import MagicMock
+
+        from srtctl.benchmarks.sglang_bench import SGLangBenchRunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = SGLangBenchRunner()
+        runtime = MagicMock()
+        runtime.frontend_port = 8000
+
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="h100"),
+            benchmark=BenchmarkConfig(type="sglang-bench", isl=1024, osl=128, concurrencies=[1, 2]),
+        )
+
+        cmd = runner.build_command(config, runtime)
+        assert cmd == [
+            "bash",
+            "/srtctl-benchmarks/sglang-bench/bench.sh",
+            "http://localhost:8000",
+            "1024",
+            "128",
+            "1x2",
+            "inf",
+        ]
+
+
+class TestMooncakeRouterRunner:
+    """Test Mooncake Router benchmark runner."""
+
+    def test_build_command_includes_tokenizer_path(self):
+        """Build command passes tokenizer path to aiperf.
+
+        This fixes a bug where aiperf couldn't load the tokenizer because it was
+        using the served model name (e.g., "Qwen/Qwen3-32B") to find the tokenizer,
+        but that's not a valid HuggingFace ID or local path. The fix passes
+        --tokenizer /model explicitly since the model is mounted there.
+        """
+        from unittest.mock import MagicMock
+
+        from srtctl.benchmarks.mooncake_router import MooncakeRouterRunner
+
+        runner = MooncakeRouterRunner()
+
+        config = MagicMock()
+        config.benchmark = MagicMock()
+        config.benchmark.mooncake_workload = "conversation"
+        config.benchmark.ttft_threshold_ms = 2000
+        config.benchmark.itl_threshold_ms = 25
+        config.served_model_name = "Qwen/Qwen3-32B"
+
+        runtime = MagicMock()
+        runtime.frontend_port = 8000
+        runtime.is_hf_model = False  # Local model mounted at /model
+
+        cmd = runner.build_command(config, runtime)
+
+        # Command: bash, script, endpoint, model_name, workload, ttft, itl, tokenizer_path
+        assert cmd[7] == "/model"  # tokenizer path
+
+
+class TestTraceReplayRunner:
+    """Test Trace Replay benchmark runner."""
+
+    def test_in_registry(self):
+        """trace-replay is registered in benchmark list."""
+        benchmarks = list_benchmarks()
+        assert "trace-replay" in benchmarks
+
+    def test_get_runner(self):
+        """Can get runner for trace-replay."""
+        runner = get_runner("trace-replay")
+        assert runner.name == "Trace-Replay-Bench"
+        assert "trace-replay" in runner.script_path
+
+    def test_validate_missing_trace_file(self):
+        """Validates that trace_file is required."""
+        from srtctl.benchmarks.trace_replay import TraceReplayRunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = TraceReplayRunner()
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(type="trace-replay", concurrencies=[4, 8]),
+        )
+        errors = runner.validate_config(config)
+        assert any("trace_file" in e for e in errors)
+
+    def test_validate_missing_concurrencies(self):
+        """Validates that concurrencies is required."""
+        from srtctl.benchmarks.trace_replay import TraceReplayRunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = TraceReplayRunner()
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(type="trace-replay", trace_file="/traces/dataset.jsonl"),
+        )
+        errors = runner.validate_config(config)
+        assert any("concurrencies" in e for e in errors)
+
+    def test_validate_valid(self):
+        """Valid config passes validation."""
+        from srtctl.benchmarks.trace_replay import TraceReplayRunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = TraceReplayRunner()
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(
+                type="trace-replay",
+                trace_file="/traces/dataset.jsonl",
+                concurrencies=[4, 8],
+            ),
+        )
+        errors = runner.validate_config(config)
+        assert errors == []
+
+    def test_build_command(self):
+        """Build command includes all expected arguments."""
+        from unittest.mock import MagicMock
+
+        from srtctl.benchmarks.trace_replay import TraceReplayRunner
+
+        runner = TraceReplayRunner()
+        runtime = MagicMock()
+        runtime.frontend_port = 8000
+        runtime.is_hf_model = False
+
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model/kimi-k25", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(
+                type="trace-replay",
+                trace_file="/traces/dataset.jsonl",
+                concurrencies=[4, 8],
+                ttft_threshold_ms=3000,
+                itl_threshold_ms=7,
+            ),
+        )
+
+        cmd = runner.build_command(config, runtime)
+
+        assert cmd[0] == "bash"
+        assert "trace-replay" in cmd[1]
+        assert cmd[2] == "http://localhost:8000"  # endpoint
+        assert cmd[3] == "kimi-k25"  # model name (from path)
+        assert cmd[4] == "/traces/dataset.jsonl"  # trace file
+        assert cmd[5] == "4,8"  # concurrencies
+        assert cmd[6] == "3000"  # ttft threshold
+        assert cmd[7] == "7"  # itl threshold
+        assert cmd[8] == "/model"  # tokenizer path (local model)
+
+    def test_build_command_default_thresholds(self):
+        """Build command uses default thresholds when not specified."""
+        from unittest.mock import MagicMock
+
+        from srtctl.benchmarks.trace_replay import TraceReplayRunner
+
+        runner = TraceReplayRunner()
+        runtime = MagicMock()
+        runtime.frontend_port = 8000
+        runtime.is_hf_model = False
+
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model/test", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(
+                type="trace-replay",
+                trace_file="/traces/dataset.jsonl",
+                concurrencies=[1],
+            ),
+        )
+
+        cmd = runner.build_command(config, runtime)
+        assert cmd[6] == "2000"  # default ttft
+        assert cmd[7] == "25"  # default itl
+
+    def test_build_command_with_aiperf_args(self):
+        """aiperf_args are passed through as CLI flags."""
+        from unittest.mock import MagicMock
+
+        from srtctl.benchmarks.trace_replay import TraceReplayRunner
+
+        runner = TraceReplayRunner()
+        runtime = MagicMock()
+        runtime.frontend_port = 8000
+        runtime.is_hf_model = False
+
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model/kimi", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(
+                type="trace-replay",
+                trace_file="/traces/dataset.jsonl",
+                concurrencies=[4],
+                aiperf_args={
+                    "benchmark-duration": 600,
+                    "workers-max": 200,
+                    "request-timeout-seconds": 1200,
+                    "profile-export-level": "raw",
+                },
+            ),
+        )
+
+        cmd = runner.build_command(config, runtime)
+
+        # Positional args come first (9 of them)
+        assert cmd[8] == "/model"  # tokenizer path
+
+        # aiperf_args appended after positional args
+        extra = cmd[9:]
+        assert "--benchmark-duration" in extra
+        assert extra[extra.index("--benchmark-duration") + 1] == "600"
+        assert "--workers-max" in extra
+        assert extra[extra.index("--workers-max") + 1] == "200"
+        assert "--request-timeout-seconds" in extra
+        assert "--profile-export-level" in extra
+        assert extra[extra.index("--profile-export-level") + 1] == "raw"
+
+    def test_build_command_aiperf_args_bool(self):
+        """Boolean aiperf_args are passed as flags without values."""
+        from unittest.mock import MagicMock
+
+        from srtctl.benchmarks.trace_replay import TraceReplayRunner
+
+        runner = TraceReplayRunner()
+        runtime = MagicMock()
+        runtime.frontend_port = 8000
+        runtime.is_hf_model = False
+
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model/test", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(
+                type="trace-replay",
+                trace_file="/traces/dataset.jsonl",
+                concurrencies=[1],
+                aiperf_args={"export-http-trace": True, "disabled-flag": False},
+            ),
+        )
+
+        cmd = runner.build_command(config, runtime)
+        extra = cmd[9:]
+        assert "--export-http-trace" in extra
+        assert "--disabled-flag" not in extra
+
+    def test_config_roundtrip(self):
+        """Config with trace-replay loads correctly from YAML."""
+        import tempfile
+        from pathlib import Path
+
+        import yaml
+
+        from srtctl.core.schema import SrtConfig
+
+        config_data = {
+            "name": "trace-test",
+            "model": {"path": "/model", "container": "/image", "precision": "fp4"},
+            "resources": {"gpu_type": "gb200"},
+            "benchmark": {
+                "type": "trace-replay",
+                "trace_file": "/traces/dataset.jsonl",
+                "concurrencies": [4, 8],
+                "ttft_threshold_ms": 3000,
+                "itl_threshold_ms": 7,
+            },
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(config_data, f)
+            tmp_path = Path(f.name)
+
+        config = SrtConfig.from_yaml(tmp_path)
+        assert config.benchmark.type == "trace-replay"
+        assert config.benchmark.trace_file == "/traces/dataset.jsonl"
+        assert config.benchmark.concurrencies == [4, 8]
+        assert config.benchmark.ttft_threshold_ms == 3000
+        assert config.benchmark.itl_threshold_ms == 7
+
+
+class TestTraceReplaySARunner:
+    """Test Trace Replay (SA) benchmark runner (aiperf --public-dataset)."""
+
+    def test_in_registry(self):
+        """trace-replay-sa is registered in benchmark list."""
+        benchmarks = list_benchmarks()
+        assert "trace-replay-sa" in benchmarks
+
+    def test_get_runner(self):
+        """Can get runner for trace-replay-sa."""
+        runner = get_runner("trace-replay-sa")
+        assert runner.name == "Trace-Replay-SA-Bench"
+        assert "trace-replay-sa" in runner.script_path
+
+    def test_validate_missing_public_dataset(self):
+        """Validates that public_dataset is required."""
+        from srtctl.benchmarks.trace_replay_sa import TraceReplaySARunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = TraceReplaySARunner()
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(type="trace-replay-sa", concurrencies=[24]),
+        )
+        errors = runner.validate_config(config)
+        assert any("public_dataset" in e for e in errors)
+
+    def test_validate_missing_concurrencies(self):
+        """Validates that concurrencies is required."""
+        from srtctl.benchmarks.trace_replay_sa import TraceReplaySARunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = TraceReplaySARunner()
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(
+                type="trace-replay-sa",
+                public_dataset="semianalysis_cc_traces_weka_no_subagents",
+            ),
+        )
+        errors = runner.validate_config(config)
+        assert any("concurrencies" in e for e in errors)
+
+    def test_validate_valid(self):
+        """Valid config passes validation."""
+        from srtctl.benchmarks.trace_replay_sa import TraceReplaySARunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = TraceReplaySARunner()
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(
+                type="trace-replay-sa",
+                public_dataset="semianalysis_cc_traces_weka_no_subagents",
+                concurrencies=[24],
+            ),
+        )
+        errors = runner.validate_config(config)
+        assert errors == []
+
+    def test_build_command(self):
+        """Build command includes all expected positional arguments."""
+        from unittest.mock import MagicMock
+
+        from srtctl.benchmarks.trace_replay_sa import TraceReplaySARunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = TraceReplaySARunner()
+        runtime = MagicMock()
+        runtime.frontend_port = 8000
+        runtime.is_hf_model = False
+
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model/kimi-k25", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(
+                type="trace-replay-sa",
+                public_dataset="semianalysis_cc_traces_weka_no_subagents",
+                num_dataset_entries=98,
+                concurrencies=[24, 32],
+                ttft_threshold_ms=5000,
+                itl_threshold_ms=10,
+            ),
+        )
+
+        cmd = runner.build_command(config, runtime)
+
+        assert cmd[0] == "bash"
+        assert "trace-replay-sa" in cmd[1]
+        assert cmd[2] == "http://localhost:8000"  # endpoint
+        assert cmd[3] == "kimi-k25"  # model name (from path)
+        assert cmd[4] == "semianalysis_cc_traces_weka_no_subagents"  # public dataset
+        assert cmd[5] == "98"  # num dataset entries
+        assert cmd[6] == "24,32"  # concurrencies
+        assert cmd[7] == "5000"  # ttft threshold
+        assert cmd[8] == "10"  # itl threshold
+        assert cmd[9] == "/model"  # tokenizer path (local model)
+
+    def test_build_command_default_num_entries_and_thresholds(self):
+        """Omitting num_dataset_entries passes an empty positional; thresholds default."""
+        from unittest.mock import MagicMock
+
+        from srtctl.benchmarks.trace_replay_sa import TraceReplaySARunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = TraceReplaySARunner()
+        runtime = MagicMock()
+        runtime.frontend_port = 8000
+        runtime.is_hf_model = False
+
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model/test", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(
+                type="trace-replay-sa",
+                public_dataset="semianalysis_cc_traces_weka_no_subagents",
+                concurrencies=[1],
+            ),
+        )
+
+        cmd = runner.build_command(config, runtime)
+        assert cmd[5] == ""  # num_dataset_entries omitted -> empty (full corpus)
+        assert cmd[7] == "2000"  # default ttft
+        assert cmd[8] == "25"  # default itl
+
+    def test_build_command_with_aiperf_args(self):
+        """aiperf_args (the SA command's tunables) are passed through as CLI flags."""
+        from unittest.mock import MagicMock
+
+        from srtctl.benchmarks.trace_replay_sa import TraceReplaySARunner
+        from srtctl.core.schema import BenchmarkConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        runner = TraceReplaySARunner()
+        runtime = MagicMock()
+        runtime.frontend_port = 8000
+        runtime.is_hf_model = False
+
+        config = SrtConfig(
+            name="test",
+            model=ModelConfig(path="/model/kimi", container="/image", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200"),
+            benchmark=BenchmarkConfig(
+                type="trace-replay-sa",
+                public_dataset="semianalysis_cc_traces_weka_no_subagents",
+                num_dataset_entries=98,
+                concurrencies=[24],
+                aiperf_args={
+                    "benchmark-duration": 1200,
+                    "benchmark-grace-period": 60,
+                    "request-timeout-seconds": 1200,
+                    "workers-max": 200,
+                    "record-processors": 8,
+                    "profile-export-level": "raw",
+                    "concurrency-ramp-duration": 60,
+                    "export-http-trace": True,
+                },
+            ),
+        )
+
+        cmd = runner.build_command(config, runtime)
+
+        # Positional args come first (10 of them), aiperf_args appended after
+        extra = cmd[10:]
+        assert extra[extra.index("--benchmark-duration") + 1] == "1200"
+        assert extra[extra.index("--workers-max") + 1] == "200"
+        assert extra[extra.index("--record-processors") + 1] == "8"
+        assert extra[extra.index("--profile-export-level") + 1] == "raw"
+        assert extra[extra.index("--concurrency-ramp-duration") + 1] == "60"
+        # Boolean true -> bare flag
+        assert "--export-http-trace" in extra
+
+    def test_config_roundtrip(self):
+        """Config with trace-replay-sa loads correctly from YAML."""
+        import tempfile
+        from pathlib import Path
+
+        import yaml
+
+        from srtctl.core.schema import SrtConfig
+
+        config_data = {
+            "name": "trace-sa-test",
+            "model": {"path": "/model", "container": "/image", "precision": "fp4"},
+            "resources": {"gpu_type": "gb200"},
+            "benchmark": {
+                "type": "trace-replay-sa",
+                "public_dataset": "semianalysis_cc_traces_weka_no_subagents",
+                "num_dataset_entries": 98,
+                "concurrencies": [24],
+                "aiperf_package": "git+https://github.com/cquil11/aiperf.git@cjq/agentx-v0.3",
+                "aiperf_args": {"export-http-trace": True, "profile-export-level": "raw"},
+            },
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(config_data, f)
+            tmp_path = Path(f.name)
+
+        config = SrtConfig.from_yaml(tmp_path)
+        assert config.benchmark.type == "trace-replay-sa"
+        assert config.benchmark.public_dataset == "semianalysis_cc_traces_weka_no_subagents"
+        assert config.benchmark.num_dataset_entries == 98
+        assert config.benchmark.concurrencies == [24]
+        assert config.benchmark.aiperf_package == "git+https://github.com/cquil11/aiperf.git@cjq/agentx-v0.3"
+
+
+class TestScriptsExist:
+    """Test that benchmark scripts exist."""
+
+    def test_scripts_dir_exists(self):
+        """Scripts directory exists."""
+        assert SCRIPTS_DIR.exists()
+
+    def test_sa_bench_script_exists(self):
+        """SA-Bench script exists."""
+        script = SCRIPTS_DIR / "sa-bench" / "bench.sh"
+        assert script.exists()
+
+    def test_mmlu_script_exists(self):
+        """MMLU script exists."""
+        script = SCRIPTS_DIR / "mmlu" / "bench.sh"
+        assert script.exists()
+
+    def test_trace_replay_sa_script_exists(self):
+        """Trace-Replay-SA script exists."""
+        script = SCRIPTS_DIR / "trace-replay-sa" / "bench.sh"
+        assert script.exists()

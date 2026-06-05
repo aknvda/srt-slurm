@@ -1,0 +1,62 @@
+ignition/
+# Logs directory - ignore all benchmark runs
+logs/*/
+
+# Dry-run output directories (local testing artifacts)
+dry-runs/
+
+# Also ignore benchmark run directories in root (legacy)
+[0-9]*_[0-9]*P_[0-9]*D_[0-9]*_[0-9]*/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.venv-compute/
+
+# uv
+.uv/
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cluster and cloud config (contains credentials and cluster-specific settings)
+srtslurm.yaml
+srtslurm.toml
+
+# Compute-arch uv binary (installed by make setup)
+bin/
+
+# Configs - ignore downloaded files but keep deepep_config.json
+configs/nats-server
+configs/etcd
+configs/etcdctl
+configs/*.whl
+configs/*.deb
+configs/*.tar.gz
+
+.ruff_cache/
+*.egg-info/
+
+.coverage
+
+configs/dg-*
+configs/flashinfer-cache/
+outputs/*

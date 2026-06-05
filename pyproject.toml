@@ -1,0 +1,103 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "srtctl"
+version = "0.3.0"
+description = "Benchmark submission framework for distributed serving workloads"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+    "jinja2>=3.1.0",
+    "marshmallow>=3.20.0",
+    "marshmallow-dataclass>=8.6.0",
+    "pydantic>=2.5.0",
+    "requests>=2.31.0",
+    "rich>=13.0.0",
+    "questionary>=2.0.0",
+    "ruamel.yaml>=0.18.0",
+]
+
+[project.scripts]
+srtctl = "srtctl.cli.submit:main"
+srtctl-i = "srtctl.cli.interactive:main"
+srtctl-sweep = "srtctl.cli.do_sweep:main"
+srtctl-setup-head = "srtctl.cli.setup_head:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/srtctl"]
+
+# =============================================================================
+# Development dependencies
+# =============================================================================
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.8.0",
+    "ty",  # Astral's fast type checker (replaces mypy)
+    "fastapi>=0.109.0",
+    "httpx>=0.27.0",  # Required by FastAPI TestClient
+    "uvicorn>=0.27.0",  # Required for integration test mock server
+    "aiperf",  # Benchmark tool for trace replay integration tests
+]
+
+# =============================================================================
+# Ruff - Fast Python linter and formatter
+# =============================================================================
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# Exclude external benchmark scripts (from vLLM/other sources)
+exclude = ["src/srtctl/benchmarks/scripts/*"]
+
+[tool.ruff.lint]
+extend-select = [
+    "I",      # isort - import sorting
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # function call in default argument
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["srtctl"]
+
+# =============================================================================
+# Pytest
+# =============================================================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short -m 'not integration'"
+markers = [
+    "integration: slow tests that run real aiperf against a mock server",
+]
+
+# =============================================================================
+# ty - Astral's fast type checker (10-100x faster than mypy)
+# https://docs.astral.sh/ty/
+# =============================================================================
+[tool.ty.src]
+exclude = [
+    "src/srtctl/benchmarks/scripts/",
+    "scripts/",
+    "analysis/",
+    "ignition/",
+]
+
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.ty.rules]
+# All defaults for now
