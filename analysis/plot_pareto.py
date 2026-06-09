@@ -267,6 +267,7 @@ def load_series_data_from_dict(dict_path: Path) -> Dict:
             "labels": series_info["labels"],
             "job_ids": series_info.get("job_ids", []),
             "ttft_p50_ms": series_info.get("ttft_p50_ms", []),
+            "gpus": series_info.get("gpus"),
         }
     return series_data
 
@@ -280,7 +281,8 @@ def export_series_data_to_dict(series_data: Dict, dict_path: Path) -> None:
             "agg-tep8x3": {
                 "points": [[x1, y1], [x2, y2], ...],
                 "labels": ["c4", "c8", ...],
-                "job_ids": ["1940824", "1940825", ...]
+                "job_ids": ["1940824", "1940825", ...],
+                "gpus": 12
             },
             ...
         }
@@ -293,6 +295,7 @@ def export_series_data_to_dict(series_data: Dict, dict_path: Path) -> None:
                 "labels": info["labels"],
                 "job_ids": info.get("job_ids", []),
                 "ttft_p50_ms": info.get("ttft_p50_ms", []),
+                "gpus": info.get("gpus"),
             }
             for name, info in series_data.items()
         }
@@ -311,6 +314,7 @@ def collect_series_data(series_list: List[Tuple[str, List[str]]], outputs_dir: P
         labels = []
         valid_job_ids = []
         ttft_p50_ms = []
+        gpus = None
         for job_id in job_ids:
             job_dir = find_srtslurm_job_dir(job_id, outputs_dir)
             if not job_dir:
@@ -333,9 +337,17 @@ def collect_series_data(series_list: List[Tuple[str, List[str]]], outputs_dir: P
             labels.append(f"c{metrics.get('concurrency', '?')}")
             valid_job_ids.append(job_id)
             ttft_p50_ms.append(metrics.get("ttft_p50"))
+            if gpus is None:
+                gpus = metrics.get("gpus")
 
         if points:
-            series_data[series_name] = {"points": points, "labels": labels, "job_ids": valid_job_ids, "ttft_p50_ms": ttft_p50_ms}
+            series_data[series_name] = {
+                "points": points,
+                "labels": labels,
+                "job_ids": valid_job_ids,
+                "ttft_p50_ms": ttft_p50_ms,
+                "gpus": gpus,
+            }
     
     return series_data
 
@@ -383,15 +395,20 @@ def main():
         points = data["points"]
         labels = data["labels"]
         job_ids = data.get("job_ids", [])
+        gpus = data.get("gpus")
         color = colors[i % len(colors)]
         marker = markers[i % len(markers)]
         
         xs, ys = zip(*points)
-        # Create legend label with job IDs in smaller text
-        if job_ids:
-            legend_label = f"{series_name}\n({', '.join(job_ids)})"
+        # Create legend label with GPU count prefix and job IDs
+        if gpus:
+            display_name = f"{int(gpus)} GPU | {series_name}"
         else:
-            legend_label = series_name
+            display_name = series_name
+        if job_ids:
+            legend_label = f"{display_name}\n({', '.join(job_ids)})"
+        else:
+            legend_label = display_name
         ax.scatter(xs, ys, c=[color], marker=marker, s=80, label=legend_label, alpha=0.8)
         
         # Draw Pareto frontier
@@ -412,8 +429,8 @@ def main():
                     point_label = label
                 ax.annotate(point_label, (x, y), textcoords="offset points", xytext=(5, 5), fontsize=8)
     
-    ax.set_xlabel("Output Tokens/s/User (higher = better latency)", fontsize=12)
-    ax.set_ylabel("Total Output Tokens/s/GPU (higher = better throughput)", fontsize=12)
+    ax.set_xlabel("Output Tokens/s/User", fontsize=12)
+    ax.set_ylabel("Total Output Tokens/s/GPU", fontsize=12)
     ax.set_title(args.title, fontsize=14)
     ax.legend(loc="best", fontsize=9, title_fontsize=10)
     if args.label_points:

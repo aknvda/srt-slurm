@@ -4,13 +4,13 @@
 Usage:
     # Parse from srtslurm job IDs (looks in outputs/ directory)
     python david_viz.py --dir 1930535 1930536
-    
+
     # Parse from direct paths
     python david_viz.py /path/to/run/folder
-    
+
     # Output TSV for Excel paste (tab-separated, prints to stdout)
     python david_viz.py --dir 1930535 --tsv
-    
+
     # Print just the header
     python david_viz.py --header
 """
@@ -73,9 +73,9 @@ _TSV_COLUMNS_TAIL = [
     "kv_total_blocks (dynamo_component_total_blocks)",
     "kv_blocksize (dynamo_frontend_model_kv_cache_block_size)",
     "kv_total_workspace_GiB (calculated)",
-    "kv_util_max (trtllm_kv_cache_utilization)",
-    "kv_reused_blocks (trtllm_kv_cache_reused_blocks)",
-    "kv_missed_blocks (trtllm_kv_cache_missed_blocks)",
+    "kv_util_max",
+    "kv_reused_blocks",
+    "kv_missed_blocks",
     "kv_hit_rate (calculated)",
 ]
 
@@ -86,46 +86,67 @@ TSV_COLUMNS_CONDP = TSV_COLUMNS_CONDP + _TSV_COLUMNS_TAIL
 
 def extract_condp_policy(config: dict) -> str:
     """Extract conditional prefill policy string from config.
-    
+
     Returns:
         - "N/A" if router-conditional-prefill is not set or false
         - "{policy} | {isl_threshold} / {ratio_threshold}" if enabled
     """
     frontend_args = config.get("frontend", {}).get("args", {})
-    
+
     if not frontend_args.get("router-conditional-prefill"):
         return "N/A"
-    
+
     policy = frontend_args.get("router-conditional-prefill-policy", "unknown")
     isl_threshold = frontend_args.get("router-conditional-prefill-eff-isl-threshold", "?")
     ratio_threshold = frontend_args.get("router-conditional-prefill-eff-isl-ratio-threshold", "?")
-    
+
     return f"{policy} | {isl_threshold} / {ratio_threshold}"
 
 
 def extract_max_num_tokens(config: dict) -> str:
-    """Extract max_num_tokens from trtllm_config.
-    
+    """Extract max_num_tokens from trtllm_config or max-num-batched-tokens from vllm_config.
+
     Tries decode first, then prefill, then aggregated.
     Returns the value as string, or "N/A" if not found.
     """
-    trtllm_config = config.get("backend", {}).get("trtllm_config", {})
-    
-    # Try decode first (most relevant for throughput)
-    decode_config = trtllm_config.get("decode") or {}
-    if decode_config.get("max_num_tokens"):
-        return str(decode_config["max_num_tokens"])
-    
-    # Try prefill
-    prefill_config = trtllm_config.get("prefill") or {}
-    if prefill_config.get("max_num_tokens"):
-        return str(prefill_config["max_num_tokens"])
-    
-    # Try aggregated
-    agg_config = trtllm_config.get("aggregated") or {}
-    if agg_config.get("max_num_tokens"):
-        return str(agg_config["max_num_tokens"])
-    
+    backend = config.get("backend", {})
+
+    # Try vllm_config first (max-num-batched-tokens)
+    vllm_config = backend.get("vllm_config", {})
+    if vllm_config:
+        # Try decode first (most relevant for throughput)
+        decode_config = vllm_config.get("decode") or {}
+        if decode_config.get("max-num-batched-tokens"):
+            return str(decode_config["max-num-batched-tokens"])
+
+        # Try prefill
+        prefill_config = vllm_config.get("prefill") or {}
+        if prefill_config.get("max-num-batched-tokens"):
+            return str(prefill_config["max-num-batched-tokens"])
+
+        # Try aggregated
+        agg_config = vllm_config.get("aggregated") or {}
+        if agg_config.get("max-num-batched-tokens"):
+            return str(agg_config["max-num-batched-tokens"])
+
+    # Fall back to trtllm_config (max_num_tokens)
+    trtllm_config = backend.get("trtllm_config", {})
+    if trtllm_config:
+        # Try decode first (most relevant for throughput)
+        decode_config = trtllm_config.get("decode") or {}
+        if decode_config.get("max_num_tokens"):
+            return str(decode_config["max_num_tokens"])
+
+        # Try prefill
+        prefill_config = trtllm_config.get("prefill") or {}
+        if prefill_config.get("max_num_tokens"):
+            return str(prefill_config["max_num_tokens"])
+
+        # Try aggregated
+        agg_config = trtllm_config.get("aggregated") or {}
+        if agg_config.get("max_num_tokens"):
+            return str(agg_config["max_num_tokens"])
+
     return "N/A"
 
 
@@ -140,12 +161,12 @@ def find_srtslurm_job_dir(job_id: str, outputs_dir: Path = SRTSLURM_OUTPUTS_DIR)
     exact = outputs_dir / job_id
     if exact.exists():
         return exact
-    
+
     # Try glob for job_id_* pattern
     matches = list(outputs_dir.glob(f"{job_id}_*"))
     if matches:
         return matches[0]
-    
+
     return None
 
 
@@ -160,14 +181,14 @@ def extract_srtslurm_info(job_dir: Path) -> Dict[str, object]:
         "condp_policy": "N/A",
         "max_num_tokens": "N/A",
     }
-    
+
     # Parse job ID and config name from directory name
     dir_name = job_dir.name
     parts = dir_name.split("_", 1)
     info["srtslurm_id"] = parts[0]
     if len(parts) > 1:
         info["config_name"] = parts[1]
-    
+
     # Try to load config.yaml for more details (check both logs/ and job root)
     config_file = job_dir / "logs" / "config.yaml"
     if not config_file.exists():
@@ -182,9 +203,14 @@ def extract_srtslurm_info(job_dir: Path) -> Dict[str, object]:
                 if config_name:
                     info["config_name"] = config_name
                 info["concurrency"] = config.get("benchmark", {}).get("concurrencies")
+                # Extract dataset from trace_file path or public_dataset
                 trace_file = config.get("benchmark", {}).get("trace_file", "")
                 if trace_file:
                     info["dataset"] = Path(trace_file).parent.name
+                else:
+                    public_dataset = config.get("benchmark", {}).get("public_dataset", "")
+                    if public_dataset:
+                        info["dataset"] = public_dataset
                 # Extract conditional prefill policy and max_num_tokens
                 info["condp_policy"] = extract_condp_policy(config)
                 info["max_num_tokens"] = extract_max_num_tokens(config)
@@ -204,7 +230,7 @@ def extract_srtslurm_info(job_dir: Path) -> Dict[str, object]:
                         info["gpus"] = total
         except Exception:
             pass
-    
+
     return info
 
 
@@ -213,7 +239,7 @@ def find_srtslurm_aiperf_json(job_dir: Path) -> Path | None:
     # Look in logs/artifacts/*/profile_export_aiperf.json (exclude warmup)
     json_files = list(job_dir.glob("logs/artifacts/*/profile_export_aiperf.json"))
     json_files = [f for f in json_files if "warmup" not in str(f)]
-    
+
     if json_files:
         return json_files[0]
     return None
@@ -223,7 +249,7 @@ def find_server_metrics_json(job_dir: Path) -> Path | None:
     """Find the server_metrics_export.json file for a srtslurm job."""
     json_files = list(job_dir.glob("logs/artifacts/*/server_metrics_export.json"))
     json_files = [f for f in json_files if "warmup" not in str(f)]
-    
+
     if json_files:
         return json_files[0]
     return None
@@ -231,11 +257,11 @@ def find_server_metrics_json(job_dir: Path) -> Path | None:
 
 def get_metric_stat_aggregated(metrics: dict, metric_name: str, stat: str, agg: str = "first") -> float | None:
     """Extract a stat from a metric, aggregating across all series (workers).
-    
+
     agg options:
         "first" - return first series value (default)
         "sum" - sum across all series
-        "max" - max across all series  
+        "max" - max across all series
         "avg" - average across all series
     """
     metric = metrics.get(metric_name)
@@ -244,16 +270,16 @@ def get_metric_stat_aggregated(metrics: dict, metric_name: str, stat: str, agg: 
     series = metric.get("series", [])
     if not series:
         return None
-    
+
     values = []
     for s in series:
         val = s.get("stats", {}).get(stat)
         if val is not None:
             values.append(val)
-    
+
     if not values:
         return None
-    
+
     if agg == "first":
         return values[0]
     elif agg == "sum":
@@ -265,14 +291,18 @@ def get_metric_stat_aggregated(metrics: dict, metric_name: str, stat: str, agg: 
     return values[0]
 
 
-def extract_kv_cache_metrics(json_path: Path) -> Dict[str, object]:
+def extract_kv_cache_metrics(json_path: Path, backend: str = "trtllm") -> Dict[str, object]:
     """Extract KV cache metrics from server_metrics_export.json.
-    
+
+    Args:
+        json_path: Path to server_metrics_export.json
+        backend: "trtllm" or "vllm" - determines which metrics to scrape
+
     Aggregates across all workers:
     - total_blocks: average across workers (capacity is similar per worker)
     - util_max: max across all workers (worst case utilization)
     - reused/missed blocks: sum across workers (total cache activity)
-    - hit_rate: calculated from summed reused/(reused+missed)
+    - hit_rate: calculated from summed reused/(reused+missed) or direct metric
     """
     result = {
         "kv_total_blocks": None,
@@ -282,49 +312,72 @@ def extract_kv_cache_metrics(json_path: Path) -> Dict[str, object]:
         "kv_missed_blocks": None,
         "kv_hit_rate": None,
     }
-    
+
     if not json_path or not json_path.exists():
         return result
-    
+
     try:
         with json_path.open() as f:
             data = json.load(f)
-        
+
         metrics = data.get("metrics", {})
-        
+
         # Total blocks - average across workers (they have similar capacity)
         result["kv_total_blocks"] = get_metric_stat_aggregated(
             metrics, "dynamo_component_total_blocks", "avg", agg="avg"
         )
-        
+
         # Block size in tokens (constant per model)
         result["kv_blocksize"] = get_metric_stat_aggregated(
             metrics, "dynamo_frontend_model_kv_cache_block_size", "avg", agg="first"
         )
-        
-        # Max utilization - take max across all workers
-        result["kv_util_max"] = get_metric_stat_aggregated(
-            metrics, "trtllm_kv_cache_utilization", "max", agg="max"
-        )
-        
-        # Cumulative counters - sum across all workers
-        result["kv_reused_blocks"] = get_metric_stat_aggregated(
-            metrics, "trtllm_kv_cache_reused_blocks", "total", agg="sum"
-        )
-        result["kv_missed_blocks"] = get_metric_stat_aggregated(
-            metrics, "trtllm_kv_cache_missed_blocks", "total", agg="sum"
-        )
-        
-        # Calculate hit rate from summed reused / (reused + missed)
-        reused = result["kv_reused_blocks"]
-        missed = result["kv_missed_blocks"]
-        if reused is not None and missed is not None:
-            total = reused + missed
-            if total > 0:
-                result["kv_hit_rate"] = reused / total
+
+        if backend == "trtllm":
+            # TRT-LLM specific metrics
+            result["kv_util_max"] = get_metric_stat_aggregated(
+                metrics, "trtllm_kv_cache_utilization", "max", agg="max"
+            )
+            result["kv_reused_blocks"] = get_metric_stat_aggregated(
+                metrics, "trtllm_kv_cache_reused_blocks", "total", agg="sum"
+            )
+            result["kv_missed_blocks"] = get_metric_stat_aggregated(
+                metrics, "trtllm_kv_cache_missed_blocks", "total", agg="sum"
+            )
+            # Calculate hit rate from summed reused / (reused + missed)
+            reused = result["kv_reused_blocks"]
+            missed = result["kv_missed_blocks"]
+            if reused is not None and missed is not None:
+                total = reused + missed
+                if total > 0:
+                    result["kv_hit_rate"] = reused / total
+
+        elif backend == "vllm":
+            # vLLM specific metrics
+            result["kv_util_max"] = get_metric_stat_aggregated(
+                metrics, "vllm:kv_cache_usage_perc", "max", agg="max"
+            )
+            # vLLM uses prefix cache hits/queries
+            hits = get_metric_stat_aggregated(
+                metrics, "vllm:prefix_cache_hits", "total", agg="sum"
+            )
+            queries = get_metric_stat_aggregated(
+                metrics, "vllm:prefix_cache_queries", "total", agg="sum"
+            )
+            result["kv_reused_blocks"] = hits
+            # Calculate misses = queries - hits
+            if hits is not None and queries is not None:
+                result["kv_missed_blocks"] = queries - hits
+            # Calculate hit rate: hits / queries
+            if hits is not None and queries is not None and queries > 0:
+                result["kv_hit_rate"] = hits / queries
+            # Fallback to dynamo router hit rate if available
+            if result["kv_hit_rate"] is None:
+                result["kv_hit_rate"] = get_metric_stat_aggregated(
+                    metrics, "dynamo_component_router_kv_hit_rate", "avg", agg="avg"
+                )
     except Exception:
         pass
-    
+
     return result
 
 
@@ -332,7 +385,7 @@ def calculate_kv_workspace_gib(
     total_blocks: float | None, blocksize: float | None, cache_mb_per_1k: float
 ) -> float | None:
     """Calculate total KV cache workspace in GiB (binary).
-    
+
     Formula: total_tokens = total_blocks * blocksize
              total_1k_seqs = total_tokens / 1000
              total_cache_GiB = (total_1k_seqs * cache_mb_per_1k) / 1024
@@ -345,61 +398,54 @@ def calculate_kv_workspace_gib(
     return total_cache_mb / 1024
 
 
-def check_runtime_errors(job_dir: Path) -> str:
-    """Check worker logs for runtime errors.
-    
+def check_runtime_errors(job_dir: Path, aiperf_data: Dict | None = None) -> str:
+    """Check for runtime errors using aiperf error_summary field.
+
+    Args:
+        job_dir: Path to the job directory (used as fallback)
+        aiperf_data: Parsed aiperf JSON data (optional, will load if not provided)
+
     Returns:
-        "v" if no errors found, otherwise "[ErrorType (details)]"
+        "v" if no errors found, otherwise "[error details]"
     """
-    import re
-    import subprocess
-    
-    logs_dir = job_dir / "logs"
-    if not logs_dir.exists():
-        return "v"
-    
-    # Search for common errors in .out files
-    error_patterns = [
-        (r"AssertionError: total_num_tokens \((\d+)\) should be less than or equal to max_num_tokens \((\d+)\)",
-         lambda m: f"[AssertionError (total_num_tokens {m.group(1)} > max_num_tokens {m.group(2)})]"),
-        (r"AssertionError: (.{1,50})",
-         lambda m: f"[AssertionError ({m.group(1).strip()})]"),
-        (r"torch\.AcceleratorError: CUDA error: (.{1,50})",
-         lambda m: f"[CUDA error ({m.group(1).strip()})]"),
-        (r"RuntimeError: (.{1,50})",
-         lambda m: f"[RuntimeError ({m.group(1).strip()})]"),
-        (r"OutOfMemoryError|out of memory|OOM",
-         lambda m: "[OOM]"),
-    ]
-    
-    try:
-        # Read all .out files
-        for out_file in logs_dir.glob("*.out"):
-            if out_file.name == "benchmark.out":
-                continue
+    # Try to get error_summary from aiperf data
+    if aiperf_data is None:
+        json_path = find_srtslurm_aiperf_json(job_dir)
+        if json_path:
             try:
-                content = out_file.read_text(errors="ignore")
-                for pattern, formatter in error_patterns:
-                    match = re.search(pattern, content)
-                    if match:
-                        return formatter(match)
+                with open(json_path) as f:
+                    aiperf_data = json.load(f)
             except Exception:
-                continue
-    except Exception:
-        pass
-    
-    return "v"
+                pass
+
+    if aiperf_data:
+        error_summary = aiperf_data.get("error_summary", [])
+        if error_summary:
+            # Return first error (truncated if too long)
+            first_error = str(error_summary[0])[:80]
+            return f"[{first_error}]"
+        return "v"
+
+    # No aiperf data available
+    return "[no aiperf data]"
 
 
-def row_from_srtslurm_job(job_dir: Path, cache_mb_per_1k: float = 34.31) -> Dict[str, object] | None:
+def row_from_srtslurm_job(
+    job_dir: Path, cache_mb_per_1k: float = 34.31, backend: str = "trtllm"
+) -> Dict[str, object] | None:
     """Extract a row of stats from a srtslurm job directory.
-    
+
+    Args:
+        job_dir: Path to the job directory
+        cache_mb_per_1k: KV cache size in MB per 1K sequence length
+        backend: "trtllm" or "vllm" - determines which metrics to scrape
+
     If no profile_export_aiperf.json is found (failed run), returns a partial row
     with config info and runtime error instead of None.
     """
     info = extract_srtslurm_info(job_dir)
     json_path = find_srtslurm_aiperf_json(job_dir)
-    
+
     if not json_path:
         # Failed run - return partial row with config and error info
         runtime_error = check_runtime_errors(job_dir)
@@ -427,27 +473,27 @@ def row_from_srtslurm_job(job_dir: Path, cache_mb_per_1k: float = 34.31) -> Dict
             "kv_total_blocks (dynamo_component_total_blocks)": None,
             "kv_blocksize (dynamo_frontend_model_kv_cache_block_size)": None,
             "kv_total_workspace_GiB (calculated)": None,
-            "kv_util_max (trtllm_kv_cache_utilization)": None,
-            "kv_reused_blocks (trtllm_kv_cache_reused_blocks)": None,
-            "kv_missed_blocks (trtllm_kv_cache_missed_blocks)": None,
+            "kv_util_max": None,
+            "kv_reused_blocks": None,
+            "kv_missed_blocks": None,
             "kv_hit_rate (calculated)": None,
         }
-    
+
     # Extract KV cache metrics from server_metrics_export.json
     server_metrics_path = find_server_metrics_json(job_dir)
-    kv_metrics = extract_kv_cache_metrics(server_metrics_path)
-    
+    kv_metrics = extract_kv_cache_metrics(server_metrics_path, backend=backend)
+
     with json_path.open() as f:
         data = json.load(f)
-    
+
     request_count = parse_float(data.get("request_count", {}).get("avg"))
     error_count = parse_float(data.get("error_request_count", {}).get("avg"))
     if error_count is None:
         error_count = 0.0
-    
+
     ttft = data.get("time_to_first_token", {})
     itl = data.get("inter_token_latency", {})
-    
+
     total_token_tput = parse_float(data.get("total_token_throughput", {}).get("avg"))
     request_tput = parse_float(data.get("request_throughput", {}).get("avg"))
     goodput = parse_float(data.get("goodput", {}).get("avg"))
@@ -474,8 +520,8 @@ def row_from_srtslurm_job(job_dir: Path, cache_mb_per_1k: float = 34.31) -> Dict
     error_count_int = int(error_count) if error_count else 0
     errors_combined = f"{error_count_int} [{error_rate_pct:.1f}%]"
 
-    # Check for runtime errors in worker logs
-    runtime_error = check_runtime_errors(job_dir)
+    # Check for runtime errors using aiperf error_summary
+    runtime_error = check_runtime_errors(job_dir, aiperf_data=data)
 
     return {
         "dataset": info["dataset"],
@@ -503,9 +549,9 @@ def row_from_srtslurm_job(job_dir: Path, cache_mb_per_1k: float = 34.31) -> Dict
         "kv_total_workspace_GiB (calculated)": calculate_kv_workspace_gib(
             kv_metrics["kv_total_blocks"], kv_metrics["kv_blocksize"], cache_mb_per_1k
         ),
-        "kv_util_max (trtllm_kv_cache_utilization)": kv_metrics["kv_util_max"],
-        "kv_reused_blocks (trtllm_kv_cache_reused_blocks)": kv_metrics["kv_reused_blocks"],
-        "kv_missed_blocks (trtllm_kv_cache_missed_blocks)": kv_metrics["kv_missed_blocks"],
+        "kv_util_max": kv_metrics["kv_util_max"],
+        "kv_reused_blocks": kv_metrics["kv_reused_blocks"],
+        "kv_missed_blocks": kv_metrics["kv_missed_blocks"],
         "kv_hit_rate (calculated)": kv_metrics["kv_hit_rate"],
     }
 
@@ -525,7 +571,7 @@ def parse_int(value: str | None) -> int | None:
 
 def find_profile_files(run_root: Path) -> Iterable[Path]:
     """Find profile_export_aiperf files (CSV or JSON) in run_root.
-    
+
     Prefers JSON over CSV when both exist in the same directory.
     """
     patterns = [
@@ -759,8 +805,8 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "paths", 
-        nargs="*", 
+        "paths",
+        nargs="*",
         help="Run folders or profile_export_aiperf files (CSV/JSON) to parse"
     )
     parser.add_argument(
@@ -805,6 +851,22 @@ def main() -> int:
         default=34.31,
         help="KV cache size in MB per 1K sequence length (default: 34.31 for Kimi-K2)"
     )
+    # Backend selection (mutually exclusive, required)
+    backend_group = parser.add_mutually_exclusive_group(required=True)
+    backend_group.add_argument(
+        "--trtllm",
+        action="store_const",
+        const="trtllm",
+        dest="backend",
+        help="Use TensorRT-LLM metrics (trtllm_kv_cache_*)"
+    )
+    backend_group.add_argument(
+        "--vllm",
+        action="store_const",
+        const="vllm",
+        dest="backend",
+        help="Use vLLM metrics (vllm:kv_cache_*, vllm:prefix_cache_*)"
+    )
     args = parser.parse_args()
 
     # Determine delimiter
@@ -822,7 +884,9 @@ def main() -> int:
         for job_id in args.job_ids:
             job_dir = find_srtslurm_job_dir(job_id, outputs_dir)
             if job_dir:
-                row = row_from_srtslurm_job(job_dir, cache_mb_per_1k=args.cache_mb_per_1k)
+                row = row_from_srtslurm_job(
+                    job_dir, cache_mb_per_1k=args.cache_mb_per_1k, backend=args.backend
+                )
                 if row:
                     srtslurm_rows.append(row)
             else:

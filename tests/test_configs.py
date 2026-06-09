@@ -1144,13 +1144,13 @@ class TestVLLMDataParallelMode:
             endpoint_mode="prefill",
             endpoint_index=0,
             node_rank=0,
-            kv_events_port=5550,
+            kv_events_port=20080,
             nixl_port=6550,
         )
 
         env = backend.get_process_environment(process)
 
-        assert env["DYN_VLLM_KV_EVENT_PORT"] == "5550"
+        assert env["DYN_VLLM_KV_EVENT_PORT"] == "20080"
         assert env["VLLM_NIXL_SIDE_CHANNEL_PORT"] == "6550"
 
     def test_vllm_get_process_environment_none_ports(self):
@@ -1176,6 +1176,74 @@ class TestVLLMDataParallelMode:
 
         assert "DYN_VLLM_KV_EVENT_PORT" not in env
         assert "VLLM_NIXL_SIDE_CHANNEL_PORT" not in env
+
+    def test_vllm_kv_events_config_global_bool(self):
+        """Test vLLM kv_events_config=True enables prefill+decode with defaults."""
+        from srtctl.backends import VLLMProtocol
+
+        config = VLLMProtocol(kv_events_config=True)
+
+        assert config.get_kv_events_config_for_mode("prefill") == {
+            "publisher": "zmq",
+            "topic": "kv-events",
+            "enable_kv_cache_events": True,
+        }
+        assert config.get_kv_events_config_for_mode("decode") == {
+            "publisher": "zmq",
+            "topic": "kv-events",
+            "enable_kv_cache_events": True,
+        }
+        assert config.get_kv_events_config_for_mode("agg") is None
+
+    def test_vllm_kv_events_config_per_mode(self):
+        """Test vLLM kv_events_config per-mode control (e.g., decode only for conditional prefill)."""
+        from srtctl.backends import VLLMProtocol
+
+        config = VLLMProtocol(
+            kv_events_config={
+                "decode": True,
+                # prefill omitted = disabled
+            }
+        )
+
+        assert config.get_kv_events_config_for_mode("decode") == {
+            "publisher": "zmq",
+            "topic": "kv-events",
+            "enable_kv_cache_events": True,
+        }
+        assert config.get_kv_events_config_for_mode("prefill") is None
+        assert config.get_kv_events_config_for_mode("agg") is None
+
+    def test_vllm_kv_events_config_custom_settings(self):
+        """Test vLLM kv_events_config with custom settings."""
+        from srtctl.backends import VLLMProtocol
+
+        config = VLLMProtocol(
+            kv_events_config={
+                "prefill": {"topic": "prefill-events"},
+                "decode": {"publisher": "custom", "topic": "decode-events"},
+            }
+        )
+
+        prefill_cfg = config.get_kv_events_config_for_mode("prefill")
+        assert prefill_cfg["publisher"] == "zmq"  # default
+        assert prefill_cfg["topic"] == "prefill-events"
+        assert prefill_cfg["enable_kv_cache_events"] is True  # vLLM default
+
+        decode_cfg = config.get_kv_events_config_for_mode("decode")
+        assert decode_cfg["publisher"] == "custom"
+        assert decode_cfg["topic"] == "decode-events"
+        assert decode_cfg["enable_kv_cache_events"] is True
+
+    def test_vllm_kv_events_config_disabled(self):
+        """Test vLLM kv_events_config disabled by default."""
+        from srtctl.backends import VLLMProtocol
+
+        config = VLLMProtocol()
+
+        assert config.get_kv_events_config_for_mode("prefill") is None
+        assert config.get_kv_events_config_for_mode("decode") is None
+        assert config.get_kv_events_config_for_mode("agg") is None
 
     def test_tp_mode_command_includes_multinode_flags(self):
         """Test standard TP mode includes multi-node coordination flags."""

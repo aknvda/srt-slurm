@@ -1,0 +1,153 @@
+# https://recipes.vllm.ai/Qwen/Qwen3-235B-A22B-Instruct-2507?hardware=gb200&variant=nvfp4&prefill_nodes=1&decode_nodes=1&strategy=pd_cluster
+name: disagg_dummy_offload_tep2x1p_tep2x1d
+
+identity:
+  model:
+    repo: nvidia/qwen3-235b-a22b-instruct-2507-nvfp4
+  frameworks:
+    dynamo: 1.2.0
+    vllm: 0.21.0+cu129
+
+model:
+  path: qwen3-235b-a22b-instruct-2507-nvfp4
+  container: dyn-121-vllm-0210-condp-v1-isl
+  precision: fp4
+
+resources:
+  gpu_type: gb200
+  prefill_nodes: 1
+  prefill_workers: 1
+  gpus_per_prefill: 2
+  decode_nodes: 1
+  decode_workers: 1
+  gpus_per_decode: 2
+  gpus_per_node: 4
+
+slurm:
+  time_limit: "00:15:00"
+
+backend:
+  type: vllm
+  # KV events: required for conditional prefill (router needs decode worker cache state)
+  kv_events_config:
+    prefill: true
+    decode: true
+  # Common environment for both prefill and decode
+  prefill_environment:
+    # NIXL side channel config (required for NixlConnector handshake)
+    VLLM_NIXL_SIDE_CHANNEL_PORT: "5600"
+    UCX_NET_DEVICES: "all"
+    # MoE FP4 optimization
+    VLLM_USE_FLASHINFER_MOE_FP4: "1"
+    # NCCL optimizations for GB200/NVLink
+    VLLM_USE_NCCL_SYMM_MEM: "1"
+    NCCL_CUMEM_ENABLE: "1"
+    NCCL_MNNVL_ENABLE: "1"
+    NCCL_NVLS_ENABLE: "1"
+    # Tool calling / reasoning parsers
+    DYN_TOOL_CALL_PARSER: hermes
+    DYN_REASONING_PARSER: qwen3
+  decode_environment:
+    # NIXL side channel config (required for NixlConnector handshake)
+    VLLM_NIXL_SIDE_CHANNEL_PORT: "5700"
+    UCX_NET_DEVICES: "all"
+    # MoE FP4 optimization
+    VLLM_USE_FLASHINFER_MOE_FP4: "1"
+    # NCCL optimizations for GB200/NVLink
+    VLLM_USE_NCCL_SYMM_MEM: "1"
+    NCCL_CUMEM_ENABLE: "1"
+    NCCL_MNNVL_ENABLE: "1"
+    NCCL_NVLS_ENABLE: "1"
+    # Tool calling / reasoning parsers
+    DYN_TOOL_CALL_PARSER: hermes
+    DYN_REASONING_PARSER: qwen3
+  vllm_config:
+    prefill:
+      # parallelisms
+      tensor-parallel-size: 2
+      enable-expert-parallel: true
+      # memory stuff
+      gpu-memory-utilization: 0.85
+      max-model-len: 262144
+      block-size: 64
+      max-num-batched-tokens: 16384
+      # kv cache stuff
+      enable-prefix-caching: true
+      kv-cache-dtype: fp8
+      # KV transfer config: MultiConnector combining NixlConnector (P/D transfer) + OffloadingConnector (CPU G2 cache)
+      # cpu_bytes_to_use = 120 GB/rank × 1073741824 = 128849018880 bytes (per-rank, NOT total)
+      kv-transfer-config: '{"kv_connector":"MultiConnector","kv_role":"kv_both","kv_connector_extra_config":{"connectors":[{"kv_connector":"NixlConnector","kv_role":"kv_both"},{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":128849018880}}]}}'
+      disaggregation-mode: prefill
+      # misc stuff
+      load-format: dummy
+      trust-remote-code: true
+      otlp-traces-endpoint: "http://10.57.209.4:4317"
+    decode:
+      # parallelisms
+      tensor-parallel-size: 2
+      enable-expert-parallel: true
+      # memory stuff
+      gpu-memory-utilization: 0.85
+      max-model-len: 262144
+      block-size: 64
+      max-num-batched-tokens: 256
+      # kv cache stuff
+      enable-prefix-caching: true
+      kv-cache-dtype: fp8
+      # KV transfer config: MultiConnector combining NixlConnector (P/D transfer) + OffloadingConnector (CPU G2 cache)
+      # cpu_bytes_to_use = 120 GB/rank × 1073741824 = 128849018880 bytes (per-rank, NOT total)
+      kv-transfer-config: '{"kv_connector":"MultiConnector","kv_role":"kv_both","kv_connector_extra_config":{"connectors":[{"kv_connector":"NixlConnector","kv_role":"kv_both"},{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":128849018880}}]}}'
+      disaggregation-mode: decode
+      # Conditional prefill: allows router to bypass prefill when decode has sufficient cache overlap
+      enable-conditional-disagg: true
+      # misc stuff
+      load-format: dummy
+      trust-remote-code: true
+      otlp-traces-endpoint: "http://10.57.209.4:4317"
+
+frontend:
+  type: dynamo
+  args:
+    router-mode: kv
+    router-reset-states: true
+    # Conditional prefill: bypass prefill when decode has sufficient cache overlap
+    router-conditional-prefill: true
+    router-conditional-prefill-policy: isl_bounding
+    router-conditional-prefill-eff-isl-threshold: 4096
+    router-conditional-prefill-eff-isl-ratio-threshold: 0.5
+  enable_multiple_frontends: false
+
+health_check:
+  max_attempts: 500
+  interval_seconds: 10
+
+dynamo:
+  install: false
+
+infra:
+  etcd_nats_dedicated_node: false
+  nats_max_payload_mb: 24
+
+extra_mount:
+  - "/lustre/fsw/coreai_dlfw_dev/karenc/srt-slurm/traces:/traces"
+
+benchmark:
+  type: trace-replay-sa
+  public_dataset: semianalysis_cc_traces_weka_with_subagents_256k
+  num_dataset_entries: 470  # full corpus of the with-subagents 256k variant (470 traces)
+  concurrencies: "5"
+  ttft_threshold_ms: 5000
+  itl_threshold_ms: 10
+  # The SA public-dataset loaders only exist on the cquil11/aiperf fork (branch cjq/agentx-v0.3).
+  # Pinned to the branch tip (2026-06-02): adds the with_subagents / 256k loaders plus
+  # weka_trace reconstruction + server-metrics fixes.
+  aiperf_package: "git+https://github.com/cquil11/aiperf.git@062a5de92c8ac8a0a6dd5d2a7fb9a539a147f3d9"
+  aiperf_args:
+    benchmark-duration: 120 # 2min for dummy
+    benchmark-grace-period: 30
+    request-timeout-seconds: 1200
+    workers-max: 200
+    record-processors: 8
+    profile-export-level: raw
+    concurrency-ramp-duration: 60
+    export-http-trace: true

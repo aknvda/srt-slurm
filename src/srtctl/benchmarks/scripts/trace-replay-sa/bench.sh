@@ -140,6 +140,7 @@ aiperf profile \
     --tokenizer "${TOKENIZER_PATH}" \
     --tokenizer-trust-remote-code \
     --url "${ENDPOINT}" \
+    --osl 100 \
     --endpoint-type chat \
     --streaming \
     --ui simple \

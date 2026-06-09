@@ -35,7 +35,7 @@ class NodePortAllocator:
     assignments per node and hands out the next available port.
 
     Port ranges (non-overlapping):
-        - kv_events_port: 5550+  (global) - ZMQ port for kv-events publishing
+        - kv_events_port: 20080+ (global) - ZMQ port for kv-events publishing (dynamo convention)
         - nixl_port:      6550+  (global) - NIXL side channel for KV transfers (vLLM)
         - http_port:      30000+ (per node) - HTTP serving port
         - bootstrap_port: 31000+ (per node) - P/D coordination port (prefill only)
@@ -53,7 +53,7 @@ class NodePortAllocator:
 
     base_http_port: int = 30000
     base_bootstrap_port: int = 31000
-    base_kv_events_port: int = 5550
+    base_kv_events_port: int = 20080  # dynamo convention: decode 20080, prefill 20081, etc.
     base_nixl_port: int = 6550  # NIXL side channel ports (must not overlap with kv_events)
 
     _http_ports: dict[str, int] = field(default_factory=dict, repr=False)

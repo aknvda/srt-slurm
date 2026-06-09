@@ -91,6 +91,12 @@ class VLLMProtocol:
     # dynamo 1.0.0+: translated to --kv-transfer-config (--connector was removed).
     connector: str | None = "nixl"
 
+    # KV events config - enables --kv-events-config with auto-allocated ports.
+    # Required for conditional prefill (router needs decode worker cache state).
+    # Per-mode: {"prefill": true, "decode": {"publisher": "zmq", "topic": "custom"}}
+    # Or global: true (enables for prefill+decode with defaults)
+    kv_events_config: bool | dict[str, Any] | None = None
+
     Schema: ClassVar[builtins.type[Schema]] = Schema
 
     # =========================================================================
@@ -132,12 +138,14 @@ class VLLMProtocol:
         vLLM with dynamo requires unique ports for each worker:
         - DYN_VLLM_KV_EVENT_PORT: ZMQ port for KV events publishing
         - VLLM_NIXL_SIDE_CHANNEL_PORT: Port for NIXL side channel transfers
+        - VLLM_NIXL_SIDE_CHANNEL_HOST: Host for NIXL side channel (required for multi-node)
         """
         env: dict[str, str] = {}
         if process.kv_events_port is not None:
             env["DYN_VLLM_KV_EVENT_PORT"] = str(process.kv_events_port)
         if process.nixl_port is not None:
             env["VLLM_NIXL_SIDE_CHANNEL_PORT"] = str(process.nixl_port)
+            env["VLLM_NIXL_SIDE_CHANNEL_HOST"] = process.node
         return env
 
     def get_served_model_name(self, default: str) -> str:
@@ -149,6 +157,41 @@ class VLLMProtocol:
                     if name:
                         return name
         return default
+
+    def get_kv_events_config_for_mode(self, mode: WorkerMode) -> dict[str, Any] | None:
+        """Get kv-events config for a worker mode.
+
+        Returns None if disabled, or dict with publisher/topic/enable_kv_cache_events if enabled.
+        vLLM requires enable_kv_cache_events=true for the router to receive cache state updates.
+        """
+        if not self.kv_events_config:
+            return None
+
+        # Global bool: enable for prefill+decode with defaults
+        if self.kv_events_config is True:
+            if mode in ("prefill", "decode"):
+                return {"publisher": "zmq", "topic": "kv-events", "enable_kv_cache_events": True}
+            return None
+
+        # Per-mode config dict
+        if isinstance(self.kv_events_config, dict):
+            # Normalize mode key: use "aggregated" for aggregated mode
+            mode_cfg = self.kv_events_config.get("aggregated") if mode == "agg" else self.kv_events_config.get(mode)
+
+            if mode_cfg is None:
+                return None
+
+            # Bool enables with defaults
+            if mode_cfg is True:
+                return {"publisher": "zmq", "topic": "kv-events", "enable_kv_cache_events": True}
+
+            # Dict allows custom settings (merge with defaults)
+            if isinstance(mode_cfg, dict):
+                result = {"publisher": "zmq", "topic": "kv-events", "enable_kv_cache_events": True}
+                result.update(mode_cfg)
+                return result
+
+        return None
 
     def allocate_endpoints(
         self,
@@ -386,6 +429,13 @@ class VLLMProtocol:
         # Add config dump path
         if dump_config_path:
             cmd.extend(["--dump-config-to", str(dump_config_path)])
+
+        # Add kv-events-config if enabled for this mode and we have an allocated port
+        kv_cfg = self.get_kv_events_config_for_mode(mode)
+        if kv_cfg and process.kv_events_port is not None:
+            # Add the endpoint with the allocated port
+            kv_cfg["endpoint"] = f"tcp://*:{process.kv_events_port}"
+            cmd.extend(["--kv-events-config", json.dumps(kv_cfg)])
 
         # Add all config flags from vllm_config
         cmd.extend(_config_to_cli_args(config))

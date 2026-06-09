@@ -317,9 +317,9 @@ class TestEndpointsToProcesses:
         assert all(port is not None for port in kv_ports), "All processes should have kv_events_port"
         assert len(kv_ports) == len(set(kv_ports)), "All kv_events_ports should be globally unique"
 
-        # Ports should be sequential starting from 5550
+        # Ports should be sequential starting from 20080 (dynamo convention)
         # With 2 prefill + 2 decode workers, each on single node = 4 processes = 4 ports
-        assert sorted(kv_ports) == [5550, 5551, 5552, 5553]
+        assert sorted(kv_ports) == [20080, 20081, 20082, 20083]
 
     def test_kv_events_port_same_node_unique(self):
         """Test kv_events_port is unique even when workers share a node."""
@@ -341,8 +341,8 @@ class TestEndpointsToProcesses:
         assert len(processes) == 2
         assert processes[0].node == processes[1].node == "node0"
         assert processes[0].kv_events_port != processes[1].kv_events_port
-        assert processes[0].kv_events_port == 5550
-        assert processes[1].kv_events_port == 5551
+        assert processes[0].kv_events_port == 20080
+        assert processes[1].kv_events_port == 20081
 
     def test_nixl_port_allocation(self):
         """Test NIXL ports are allocated globally unique starting at 6550."""

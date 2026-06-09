@@ -1,0 +1,103 @@
+# https://recipes.vllm.ai/Qwen/Qwen3-235B-A22B-Instruct-2507
+name: agg_tep4x1_kv_routing_dummy
+
+identity:
+  model:
+    repo: nvidia/qwen3-235b-a22b-instruct-2507-nvfp4
+  frameworks:
+    dynamo: 1.2.0
+    vllm: 0.20.1
+
+model:
+  path: qwen3-235b-a22b-instruct-2507-nvfp4
+  container: dyn-120-vllm-0201-release
+  precision: fp4
+
+resources:
+  gpu_type: gb200
+  agg_nodes: 1
+  agg_workers: 1
+  gpus_per_agg: 4
+  gpus_per_node: 4
+
+slurm:
+  time_limit: "00:15:00"
+
+backend:
+  type: vllm
+  aggregated_environment:
+    OTEL_SERVICE_NAME: "dynamo-agg-tep4x6-kv-conc24"
+    # OpenTelemetry tracing (vLLM uses env vars, not engine flags)
+    OTEL_EXPORT_ENABLED: "true"
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://10.57.209.4:4317"
+    VLLM_USE_FLASHINFER_MOE_FP4: "1"
+    DYN_TOOL_CALL_PARSER: hermes
+    DYN_REASONING_PARSER: qwen3
+  vllm_config:
+    aggregated:
+      # parallelisms
+      tensor-parallel-size: 4
+      enable-expert-parallel: true
+      # memory stuff
+      gpu-memory-utilization: 0.85
+      max-model-len: 262144
+      block-size: 64
+      max-num-seqs: 40
+      max-num-batched-tokens: 32768
+      # kv cache stuff
+      enable-prefix-caching: true
+      kv-cache-dtype: fp8
+      # misc stuff
+      load-format: dummy
+      trust-remote-code: true
+      otlp-traces-endpoint: "http://10.57.209.4:4317"
+
+frontend:
+  type: dynamo
+  args:
+    router-mode: kv
+    router-reset-states: true
+  enable_multiple_frontends: false
+  env:
+    OTEL_SERVICE_NAME: "dynamo-frontend-tep4x6-kv-conc24"
+    OTEL_EXPORT_ENABLED: "true"
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://10.57.209.4:4317"
+
+health_check:
+  max_attempts: 500
+  interval_seconds: 10
+
+dynamo:
+  install: false
+
+infra:
+  etcd_nats_dedicated_node: false
+  nats_max_payload_mb: 24
+
+observability:
+  enable_otel: true
+  otel_endpoint: "http://10.57.209.4:4317"
+
+extra_mount:
+  - "/lustre/fsw/coreai_dlfw_dev/karenc/srt-slurm/traces:/traces"
+
+benchmark:
+  type: trace-replay-sa
+  public_dataset: semianalysis_cc_traces_weka_with_subagents_256k
+  num_dataset_entries: 470  # full corpus of the with-subagents 256k variant (470 traces)
+  concurrencies: "5"
+  ttft_threshold_ms: 5000
+  itl_threshold_ms: 10
+  # The SA public-dataset loaders only exist on the cquil11/aiperf fork (branch cjq/agentx-v0.3).
+  # Pinned to the branch tip (2026-06-02): adds the with_subagents / 256k loaders plus
+  # weka_trace reconstruction + server-metrics fixes.
+  aiperf_package: "git+https://github.com/cquil11/aiperf.git@062a5de92c8ac8a0a6dd5d2a7fb9a539a147f3d9"
+  aiperf_args:
+    benchmark-duration: 120 # 2min for dummy
+    benchmark-grace-period: 30
+    request-timeout-seconds: 1200
+    workers-max: 200
+    record-processors: 8
+    profile-export-level: raw
+    concurrency-ramp-duration: 60
+    export-http-trace: true
