@@ -1,0 +1,653 @@
+{
+  "schema_version": "1.1",
+  "aiperf_version": "0.8.0",
+  "benchmark_id": "b1de41a0-ee1f-45e7-bc8a-d9891d1def03",
+  "error_request_count": {
+    "unit": "requests",
+    "avg": 5719.0
+  },
+  "error_isl": {
+    "unit": "tokens",
+    "avg": 12870.130267529288,
+    "p1": 894.0,
+    "p5": 901.0,
+    "p10": 969.8000000000001,
+    "p25": 2507.5,
+    "p50": 7640.0,
+    "p75": 16254.5,
+    "p90": 28637.8,
+    "p95": 41792.99999999998,
+    "p99": 91206.89999999985,
+    "min": 891.0,
+    "max": 123192.0,
+    "std": 16704.097648869705,
+    "count": 5719,
+    "sum": 73604275.0
+  },
+  "total_error_isl": {
+    "unit": "tokens",
+    "avg": 73604275.0
+  },
+  "telemetry_data": {
+    "summary": {
+      "endpoints_configured": [
+        "http://localhost:9400/metrics"
+      ],
+      "endpoints_successful": [
+        "http://localhost:9400/metrics"
+      ],
+      "start_time": "2026-06-10T19:18:23.270195",
+      "end_time": "2026-06-10T19:48:27.279760"
+    },
+    "endpoints": {
+      "localhost:9400": {
+        "gpus": {
+          "gpu_0": {
+            "gpu_index": 0,
+            "gpu_name": "NVIDIA GB200",
+            "gpu_uuid": "GPU-f99b9386-4e6e-c2c0-e0f2-a0b0582e0049",
+            "hostname": "ptyche0019.ptyche.clusters.nvidia.com",
+            "metrics": {
+              "gpu_power_usage": {
+                "unit": "W",
+                "avg": 217.5805111111111,
+                "p1": 217.252,
+                "p5": 217.252,
+                "p10": 217.253,
+                "p25": 217.255,
+                "p50": 217.33100000000002,
+                "p75": 217.6825,
+                "p90": 218.32000000000002,
+                "p95": 218.703,
+                "p99": 219.12919,
+                "min": 217.252,
+                "max": 219.28,
+                "std": 0.48332895316836283,
+                "count": 180,
+                "sum": 39164.492
+              },
+              "gpu_temperature": {
+                "unit": "°C",
+                "avg": 27.622222222222224,
+                "p1": 27.0,
+                "p5": 27.0,
+                "p10": 27.0,
+                "p25": 27.0,
+                "p50": 28.0,
+                "p75": 28.0,
+                "p90": 28.0,
+                "p95": 28.0,
+                "p99": 28.0,
+                "min": 27.0,
+                "max": 28.0,
+                "std": 0.48618404170482804,
+                "count": 180,
+                "sum": 4972.0
+              }
+            }
+          },
+          "gpu_1": {
+            "gpu_index": 1,
+            "gpu_name": "NVIDIA GB200",
+            "gpu_uuid": "GPU-ae8c2d12-8b01-1f57-e42d-a1af800198a5",
+            "hostname": "ptyche0019.ptyche.clusters.nvidia.com",
+            "metrics": {
+              "gpu_power_usage": {
+                "unit": "W",
+                "avg": 215.44072777777774,
+                "p1": 215.44,
+                "p5": 215.44,
+                "p10": 215.44,
+                "p25": 215.44,
+                "p50": 215.441,
+                "p75": 215.441,
+                "p90": 215.441,
+                "p95": 215.441,
+                "p99": 215.443,
+                "min": 215.44,
+                "max": 215.446,
+                "std": 0.0006836523305038972,
+                "count": 180,
+                "sum": 38779.33099999999
+              },
+              "gpu_temperature": {
+                "unit": "°C",
+                "avg": 28.08888888888889,
+                "p1": 27.0,
+                "p5": 28.0,
+                "p10": 28.0,
+                "p25": 28.0,
+                "p50": 28.0,
+                "p75": 28.0,
+                "p90": 29.0,
+                "p95": 29.0,
+                "p99": 29.0,
+                "min": 27.0,
+                "max": 29.0,
+                "std": 0.37054827095117276,
+                "count": 180,
+                "sum": 5056.0
+              }
+            }
+          },
+          "gpu_2": {
+            "gpu_index": 2,
+            "gpu_name": "NVIDIA GB200",
+            "gpu_uuid": "GPU-f5f90976-885e-c5c0-d7e5-dfcd814712d1",
+            "hostname": "ptyche0019.ptyche.clusters.nvidia.com",
+            "metrics": {
+              "gpu_power_usage": {
+                "unit": "W",
+                "avg": 215.65786111111115,
+                "p1": 215.33715,
+                "p5": 215.51185,
+                "p10": 215.65650000000002,
+                "p25": 215.674,
+                "p50": 215.679,
+                "p75": 215.68,
+                "p90": 215.68,
+                "p95": 215.68,
+                "p99": 215.68,
+                "min": 215.184,
+                "max": 215.68,
+                "std": 0.07107260933469023,
+                "count": 180,
+                "sum": 38818.41500000001
+              },
+              "gpu_temperature": {
+                "unit": "°C",
+                "avg": 27.416666666666668,
+                "p1": 27.0,
+                "p5": 27.0,
+                "p10": 27.0,
+                "p25": 27.0,
+                "p50": 27.0,
+                "p75": 28.0,
+                "p90": 28.0,
+                "p95": 28.0,
+                "p99": 28.0,
+                "min": 27.0,
+                "max": 28.0,
+                "std": 0.4943818441460295,
+                "count": 180,
+                "sum": 4935.0
+              }
+            }
+          },
+          "gpu_3": {
+            "gpu_index": 3,
+            "gpu_name": "NVIDIA GB200",
+            "gpu_uuid": "GPU-cfcbe27a-ec74-01b7-7ea0-7171381d9ec5",
+            "hostname": "ptyche0019.ptyche.clusters.nvidia.com",
+            "metrics": {
+              "gpu_power_usage": {
+                "unit": "W",
+                "avg": 229.08684444444444,
+                "p1": 229.03658000000001,
+                "p5": 229.043,
+                "p10": 229.0499,
+                "p25": 229.064,
+                "p50": 229.083,
+                "p75": 229.1095,
+                "p90": 229.126,
+                "p95": 229.13414999999998,
+                "p99": 229.14663,
+                "min": 229.032,
+                "max": 229.155,
+                "std": 0.02851694041707474,
+                "count": 180,
+                "sum": 41235.632
+              },
+              "gpu_temperature": {
+                "unit": "°C",
+                "avg": 28.383333333333333,
+                "p1": 28.0,
+                "p5": 28.0,
+                "p10": 28.0,
+                "p25": 28.0,
+                "p50": 28.0,
+                "p75": 29.0,
+                "p90": 29.0,
+                "p95": 29.0,
+                "p99": 29.0,
+                "min": 28.0,
+                "max": 29.0,
+                "std": 0.48755460946103657,
+                "count": 180,
+                "sum": 5109.0
+              }
+            }
+          }
+        }
+      }
+    },
+    "error_summary": []
+  },
+  "input_config": {
+    "endpoint": {
+      "model_names": [
+        "Qwen3-235B-A22B-Instruct-2507-NVFP4"
+      ],
+      "streaming": true,
+      "urls": [
+        "http://localhost:8000"
+      ],
+      "timeout_seconds": 1200.0
+    },
+    "input": {
+      "extra": [
+        [
+          "ignore_eos",
+          true
+        ]
+      ],
+      "extra_inputs_parsed": {
+        "ignore_eos": true
+      },
+      "detected_loader": "mooncake_trace",
+      "file": "/traces/mooncake_conversation_trace.jsonl",
+      "fixed_schedule": true,
+      "custom_dataset_type": "mooncake_trace",
+      "random_seed": 42,
+      "goodput": {
+        "time_to_first_token": 5000.0,
+        "inter_token_latency": 10.0
+      }
+    },
+    "output": {
+      "artifact_directory": "/logs/artifacts/Qwen3-235B-A22B-Instruct-2507-NVFP4_trace_c80_20260610_191803",
+      "export_level": "raw",
+      "export_http_trace": true
+    },
+    "tokenizer": {
+      "name": "/model",
+      "trust_remote_code": true,
+      "resolved_names": {
+        "Qwen3-235B-A22B-Instruct-2507-NVFP4": "/model"
+      }
+    },
+    "loadgen": {
+      "benchmark_duration": 1800.0,
+      "benchmark_grace_period": 30.0,
+      "concurrency": 80,
+      "request_count": 12031,
+      "concurrency_ramp_duration": 120.0
+    },
+    "cli_command": "aiperf profile -m 'Qwen3-235B-A22B-Instruct-2507-NVFP4' --tokenizer '/model' --tokenizer-trust-remote-code --input-file '/traces/mooncake_conversation_trace.jsonl' --custom-dataset-type 'mooncake_trace' --url 'http://localhost:8000' --streaming --extra-inputs 'ignore_eos:true' --concurrency 80 --random-seed 42 --ui 'simple' --artifact-dir '/logs/artifacts/Qwen3-235B-A22B-Instruct-2507-NVFP4_trace_c80_20260610_191803' --server-metrics 'http://10.52.97.52:8081/metrics' 'http://10.52.97.52:8082/metrics' 'http://10.52.97.53:8083/metrics' 'http://10.52.97.98:8084/metrics' 'http://10.52.97.98:8085/metrics' 'http://10.52.97.99:8086/metrics' 'http://10.52.97.99:8087/metrics' --server-metrics-formats 'json' 'jsonl' --goodput 'time_to_first_token:5000 inter_token_latency:10' --benchmark-duration 1800 --benchmark-grace-period 30 --concurrency-ramp-duration 120 --export-http-trace --fixed-schedule --profile-export-level 'raw' --record-processors 8 --request-timeout-seconds 1200 --workers-max 200",
+    "benchmark_id": "b1de41a0-ee1f-45e7-bc8a-d9891d1def03",
+    "server_metrics": [
+      "http://10.52.97.52:8081/metrics",
+      "http://10.52.97.52:8082/metrics",
+      "http://10.52.97.53:8083/metrics",
+      "http://10.52.97.98:8084/metrics",
+      "http://10.52.97.98:8085/metrics",
+      "http://10.52.97.99:8086/metrics",
+      "http://10.52.97.99:8087/metrics"
+    ],
+    "server_metrics_formats": [
+      "json",
+      "jsonl"
+    ]
+  },
+  "was_cancelled": false,
+  "error_summary": [
+    {
+      "error_details": {
+        "code": 500,
+        "type": "Internal Server Error",
+        "message": "{\"message\":\"Failed to generate completions: Prefill execution failed: Prefill router returned error in output: BackendInvalidArgument: ValueError: Unsupported kv_connector='MultiConnector' for PD. Supported names: ['MooncakeConnector', 'NixlConnector']. If this is a typo or a renamed vLLM connector, fix the kv_transfer_config; if this is a new connector, add it to KV_CONNECTOR_PROTOCOLS.\",\"type\":\"Internal Server Error\",\"code\":500}"
+      },
+      "count": 5719
+    }
+  ],
+  "start_time": "2026-06-10T19:18:23.270195",
+  "end_time": "2026-06-10T19:48:23.273306",
+  "branch_stats": {
+    "children_spawned": 0,
+    "children_completed": 0,
+    "children_errored": 0,
+    "parents_suspended": 0,
+    "parents_resumed": 0,
+    "parents_failed_due_to_child_error": 0,
+    "joins_suppressed": 0,
+    "children_truncated": 0
+  },
+  "gpu_power_usage_dcgm_http___localhost_9400_metrics_gpu0_GPU-f99b9386": {
+    "unit": "W",
+    "avg": 217.57696703296705,
+    "p1": 217.252,
+    "p5": 217.252,
+    "p10": 217.253,
+    "p25": 217.255,
+    "p50": 217.3295,
+    "p75": 217.67950000000002,
+    "p90": 218.3178,
+    "p95": 218.69725,
+    "p99": 219.12641,
+    "min": 217.252,
+    "max": 219.28,
+    "std": 0.48183261921575954,
+    "count": 182,
+    "sum": 39599.008
+  },
+  "gpu_temperature_dcgm_http___localhost_9400_metrics_gpu0_GPU-f99b9386": {
+    "unit": "°C",
+    "avg": 27.615384615384617,
+    "p1": 27.0,
+    "p5": 27.0,
+    "p10": 27.0,
+    "p25": 27.0,
+    "p50": 28.0,
+    "p75": 28.0,
+    "p90": 28.0,
+    "p95": 28.0,
+    "p99": 28.0,
+    "min": 27.0,
+    "max": 28.0,
+    "std": 0.48784633866489785,
+    "count": 182,
+    "sum": 5026.0
+  },
+  "gpu_power_usage_dcgm_http___localhost_9400_metrics_gpu1_GPU-ae8c2d12": {
+    "unit": "W",
+    "avg": 215.4407307692307,
+    "p1": 215.44,
+    "p5": 215.44,
+    "p10": 215.44,
+    "p25": 215.44,
+    "p50": 215.441,
+    "p75": 215.441,
+    "p90": 215.441,
+    "p95": 215.441,
+    "p99": 215.443,
+    "min": 215.44,
+    "max": 215.446,
+    "std": 0.000680460082851785,
+    "count": 182,
+    "sum": 39210.21299999999
+  },
+  "gpu_temperature_dcgm_http___localhost_9400_metrics_gpu1_GPU-ae8c2d12": {
+    "unit": "°C",
+    "avg": 28.087912087912088,
+    "p1": 27.0,
+    "p5": 28.0,
+    "p10": 28.0,
+    "p25": 28.0,
+    "p50": 28.0,
+    "p75": 28.0,
+    "p90": 29.0,
+    "p95": 29.0,
+    "p99": 29.0,
+    "min": 27.0,
+    "max": 29.0,
+    "std": 0.36861249917658473,
+    "count": 182,
+    "sum": 5112.0
+  },
+  "gpu_power_usage_dcgm_http___localhost_9400_metrics_gpu2_GPU-f5f90976": {
+    "unit": "W",
+    "avg": 215.65809340659345,
+    "p1": 215.33885,
+    "p5": 215.51225,
+    "p10": 215.657,
+    "p25": 215.674,
+    "p50": 215.679,
+    "p75": 215.68,
+    "p90": 215.68,
+    "p95": 215.68,
+    "p99": 215.68,
+    "min": 215.184,
+    "max": 215.68,
+    "std": 0.07071338976600319,
+    "count": 182,
+    "sum": 39249.77300000001
+  },
+  "gpu_temperature_dcgm_http___localhost_9400_metrics_gpu2_GPU-f5f90976": {
+    "unit": "°C",
+    "avg": 27.412087912087912,
+    "p1": 27.0,
+    "p5": 27.0,
+    "p10": 27.0,
+    "p25": 27.0,
+    "p50": 27.0,
+    "p75": 28.0,
+    "p90": 28.0,
+    "p95": 28.0,
+    "p99": 28.0,
+    "min": 27.0,
+    "max": 28.0,
+    "std": 0.49356861851118733,
+    "count": 182,
+    "sum": 4989.0
+  },
+  "gpu_power_usage_dcgm_http___localhost_9400_metrics_gpu3_GPU-cfcbe27a": {
+    "unit": "W",
+    "avg": 229.08716483516486,
+    "p1": 229.03662,
+    "p5": 229.04305,
+    "p10": 229.05020000000002,
+    "p25": 229.064,
+    "p50": 229.083,
+    "p75": 229.1105,
+    "p90": 229.126,
+    "p95": 229.13685,
+    "p99": 229.15014,
+    "min": 229.032,
+    "max": 229.158,
+    "std": 0.02886193606270186,
+    "count": 182,
+    "sum": 41693.864
+  },
+  "gpu_temperature_dcgm_http___localhost_9400_metrics_gpu3_GPU-cfcbe27a": {
+    "unit": "°C",
+    "avg": 28.37912087912088,
+    "p1": 28.0,
+    "p5": 28.0,
+    "p10": 28.0,
+    "p25": 28.0,
+    "p50": 28.0,
+    "p75": 29.0,
+    "p90": 29.0,
+    "p95": 29.0,
+    "p99": 29.0,
+    "min": 28.0,
+    "max": 29.0,
+    "std": 0.4865066552874707,
+    "count": 182,
+    "sum": 5165.0
+  },
+  "context_overflow_count": {
+    "unit": "requests",
+    "avg": 0.0
+  },
+  "effective_concurrency": {
+    "unit": "requests",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "effective_decode_throughput": {
+    "unit": "tokens/sec",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "effective_prefill_throughput": {
+    "unit": "tokens/sec",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "effective_decode_concurrency": {
+    "unit": "requests",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "effective_prefill_concurrency": {
+    "unit": "requests",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "effective_total_throughput": {
+    "unit": "tokens/sec",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "effective_decode_throughput_per_user": {
+    "unit": "tokens/sec/user",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "effective_prefill_throughput_per_user": {
+    "unit": "tokens/sec/user",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "tokens_in_flight": {
+    "unit": "tokens",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "active_decode_throughput": {
+    "unit": "tokens/sec",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "active_prefill_throughput": {
+    "unit": "tokens/sec",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "active_decode_throughput_per_user": {
+    "unit": "tokens/sec/user",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "active_prefill_throughput_per_user": {
+    "unit": "tokens/sec/user",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "active_total_throughput": {
+    "unit": "tokens/sec",
+    "avg": 0.0,
+    "p50": 0.0,
+    "p90": 0.0,
+    "p95": 0.0,
+    "p99": 0.0,
+    "min": 0.0,
+    "max": 0.0,
+    "std": 0.0
+  },
+  "credit_to_start_latency": {
+    "unit": "ms",
+    "avg": 0.867119269802413,
+    "p1": 0.60220416,
+    "p5": 0.62848,
+    "p10": 0.6437888,
+    "p25": 0.672768,
+    "p50": 0.755968,
+    "p75": 1.107456,
+    "p90": 1.204992,
+    "p95": 1.2513535999999998,
+    "p99": 1.3836595199999997,
+    "min": 0.564736,
+    "max": 1.789952,
+    "std": 0.23289118115024596,
+    "count": 5719,
+    "sum": 4959.055104
+  },
+  "effective_latency": {
+    "unit": "ms",
+    "avg": 0.867119269802413,
+    "p1": 0.60220416,
+    "p5": 0.62848,
+    "p10": 0.6437888,
+    "p25": 0.672768,
+    "p50": 0.755968,
+    "p75": 1.107456,
+    "p90": 1.204992,
+    "p95": 1.2513535999999998,
+    "p99": 1.3836595199999997,
+    "min": 0.564736,
+    "max": 1.789952,
+    "std": 0.23289118115024596,
+    "count": 5719,
+    "sum": 4959.055104
+  }
+}

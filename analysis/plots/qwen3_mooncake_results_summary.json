@@ -1,0 +1,62 @@
+[
+  {
+    "concurrency": 36,
+    "source_json": "analysis/plots/qwen3_mooncake_raw/c36_profile_export_aiperf.json",
+    "effective_decode_throughput_per_user_tokens_sec_user": 0.0,
+    "effective_total_throughput_tokens_sec": 0.0,
+    "effective_total_throughput_tokens_sec_per_gpu": 0.0,
+    "effective_decode_throughput_tokens_sec": 0.0,
+    "effective_prefill_throughput_tokens_sec": 0.0,
+    "effective_concurrency_requests": 0.0,
+    "error_request_count": 5719,
+    "effective_latency_avg_ms": 0.990341752054555,
+    "effective_latency_p50_ms": 1.076992,
+    "credit_to_start_latency_p50_ms": 1.076992,
+    "error_message": "Failed to generate completions: Prefill execution failed: Prefill router returned error in output: BackendInvalidArgument: ValueError: Unsupported kv_connector='MultiConnector' for PD. Supported names: ['MooncakeConnector', 'NixlConnector']. If this is a typo or a renamed vLLM connector, fix the kv_transfer_config; if this is a new connector, add it to KV_CONNECTOR_PROTOCOLS."
+  },
+  {
+    "concurrency": 60,
+    "source_json": "analysis/plots/qwen3_mooncake_raw/c60_profile_export_aiperf.json",
+    "effective_decode_throughput_per_user_tokens_sec_user": 0.0,
+    "effective_total_throughput_tokens_sec": 0.0,
+    "effective_total_throughput_tokens_sec_per_gpu": 0.0,
+    "effective_decode_throughput_tokens_sec": 0.0,
+    "effective_prefill_throughput_tokens_sec": 0.0,
+    "effective_concurrency_requests": 0.0,
+    "error_request_count": 5719,
+    "effective_latency_avg_ms": 1.1716282930582271,
+    "effective_latency_p50_ms": 1.16608,
+    "credit_to_start_latency_p50_ms": 1.16608,
+    "error_message": "Failed to generate completions: Prefill execution failed: Prefill router returned error in output: BackendInvalidArgument: ValueError: Unsupported kv_connector='MultiConnector' for PD. Supported names: ['MooncakeConnector', 'NixlConnector']. If this is a typo or a renamed vLLM connector, fix the kv_transfer_config; if this is a new connector, add it to KV_CONNECTOR_PROTOCOLS."
+  },
+  {
+    "concurrency": 80,
+    "source_json": "analysis/plots/qwen3_mooncake_raw/c80_profile_export_aiperf.json",
+    "effective_decode_throughput_per_user_tokens_sec_user": 0.0,
+    "effective_total_throughput_tokens_sec": 0.0,
+    "effective_total_throughput_tokens_sec_per_gpu": 0.0,
+    "effective_decode_throughput_tokens_sec": 0.0,
+    "effective_prefill_throughput_tokens_sec": 0.0,
+    "effective_concurrency_requests": 0.0,
+    "error_request_count": 5719,
+    "effective_latency_avg_ms": 0.867119269802413,
+    "effective_latency_p50_ms": 0.755968,
+    "credit_to_start_latency_p50_ms": 0.755968,
+    "error_message": "Failed to generate completions: Prefill execution failed: Prefill router returned error in output: BackendInvalidArgument: ValueError: Unsupported kv_connector='MultiConnector' for PD. Supported names: ['MooncakeConnector', 'NixlConnector']. If this is a typo or a renamed vLLM connector, fix the kv_transfer_config; if this is a new connector, add it to KV_CONNECTOR_PROTOCOLS."
+  },
+  {
+    "concurrency": 96,
+    "source_json": "analysis/plots/qwen3_mooncake_raw/c96_profile_export_aiperf.json",
+    "effective_decode_throughput_per_user_tokens_sec_user": 0.0,
+    "effective_total_throughput_tokens_sec": 0.0,
+    "effective_total_throughput_tokens_sec_per_gpu": 0.0,
+    "effective_decode_throughput_tokens_sec": 0.0,
+    "effective_prefill_throughput_tokens_sec": 0.0,
+    "effective_concurrency_requests": 0.0,
+    "error_request_count": 5719,
+    "effective_latency_avg_ms": 0.9040586955761498,
+    "effective_latency_p50_ms": 0.823296,
+    "credit_to_start_latency_p50_ms": 0.823296,
+    "error_message": "Failed to generate completions: Prefill execution failed: Prefill router returned error in output: BackendInvalidArgument: ValueError: Unsupported kv_connector='MultiConnector' for PD. Supported names: ['MooncakeConnector', 'NixlConnector']. If this is a typo or a renamed vLLM connector, fix the kv_transfer_config; if this is a new connector, add it to KV_CONNECTOR_PROTOCOLS."
+  }
+]
