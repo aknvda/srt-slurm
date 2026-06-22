@@ -1,0 +1,107 @@
+# https://recipes.vllm.ai/Qwen/Qwen3-235B-A22B-Instruct-2507
+name: agg_tep2x6_kv_routing
+
+identity:
+  model:
+    repo: nvidia/qwen3-235b-a22b-instruct-2507-nvfp4
+  frameworks:
+    dynamo: 1.2.0
+    vllm: 0.22.0+cu129
+
+model:
+  path: qwen3-235b-a22b-instruct-2507-nvfp4
+  container: dynamo-vllm-kvbm-engine-service-bf5a008fc5f0-aarch64
+  precision: fp4
+
+resources:
+  gpu_type: gb200
+  agg_nodes: 6
+  agg_workers: 6
+  gpus_per_agg: 2
+  # Allocate one TP2 worker per node to keep CPU KV offload memory below node RAM.
+  gpus_per_node: 2
+
+slurm:
+  time_limit: "00:45:00"
+
+backend:
+  type: vllm
+  kv_events_config:
+    aggregated: true
+  aggregated_environment:
+    OTEL_SERVICE_NAME: "dynamo-agg-tep2x6-kv-conc{concurrency}"
+    # OpenTelemetry tracing (vLLM uses env vars, not engine flags)
+    OTEL_EXPORT_ENABLED: "true"
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://10.57.209.4:4317"
+    VLLM_USE_FLASHINFER_MOE_FP4: "1"
+    DYN_TOOL_CALL_PARSER: hermes
+    DYN_REASONING_PARSER: qwen3
+  vllm_config:
+    aggregated:
+      # parallelisms
+      tensor-parallel-size: 2
+      enable-expert-parallel: true
+      # memory stuff
+      gpu-memory-utilization: 0.85
+      max-model-len: 262144
+      block-size: 64
+      max-num-batched-tokens: 32768
+      # kv cache stuff
+      enable-prefix-caching: true
+      kv-cache-dtype: fp8
+      # Retained from original aggregate config.
+      kv-offloading-size: 480
+      kv-transfer-config: '{"kv_connector_extra_config": {"offload_prompt_only": false, "eviction_policy": "lru", "store_threshold": 0}}'
+      # misc stuff
+      trust-remote-code: true
+      otlp-traces-endpoint: "http://10.57.209.4:4317"
+
+frontend:
+  type: dynamo
+  args:
+    router-mode: kv
+    router-reset-states: true
+  enable_multiple_frontends: false
+  env:
+    OTEL_SERVICE_NAME: "dynamo-frontend-tep2x6-kv-conc{concurrency}"
+    OTEL_EXPORT_ENABLED: "true"
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://10.57.209.4:4317"
+
+health_check:
+  max_attempts: 500
+  interval_seconds: 10
+
+dynamo:
+  install: false
+
+infra:
+  etcd_nats_dedicated_node: false
+  nats_max_payload_mb: 24
+
+observability:
+  enable_otel: true
+  otel_endpoint: "http://10.57.209.4:4317"
+
+sweep:
+  concurrency: [36, 60, 80, 96]
+
+extra_mount:
+  - "traces:/traces"
+
+benchmark:
+  type: trace-replay
+  trace_file: /traces/mooncake_conversation_trace.jsonl
+  concurrencies: "{concurrency}"
+  ttft_threshold_ms: 5000
+  itl_threshold_ms: 10
+  aiperf_package: "git+https://github.com/cquil11/aiperf.git@062a5de92c8ac8a0a6dd5d2a7fb9a539a147f3d9"
+  aiperf_args:
+    fixed-schedule: true
+    benchmark-duration: 1800 # 30min
+    benchmark-grace-period: 30
+    request-timeout-seconds: 1200
+    workers-max: 200
+    record-processors: 8
+    profile-export-level: raw
+    concurrency-ramp-duration: 120
+    export-http-trace: true

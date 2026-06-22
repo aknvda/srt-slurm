@@ -122,7 +122,7 @@ aiperf profile \
     --url "${ENDPOINT}" \
     --streaming \
     --ui simple \
-    --extra-inputs ignore_eos:true \
+    --extra-inputs ignore_eos:true max_tokens:16 \
     --concurrency 1 \
     --request-count 5 \
     --artifact-dir "${WARMUP_DIR}"

@@ -158,6 +158,57 @@ def show_config_details(config: SrtConfig) -> None:
         opts = " ".join(f"--{k} {v}" if v else f"--{k}" for k, v in config.srun_options.items())
         console.print(f"[dim]srun options:[/] {opts}")
 
+    # --- KVBM Hub ---
+    if config.kvbm_hub.enabled:
+        hub = config.kvbm_hub
+        hub_table = Table(title="KVBM Hub", show_lines=False, pad_edge=False)
+        hub_table.add_column("Setting", style="yellow")
+        hub_table.add_column("Value", style="white")
+        hub_table.add_row("discovery_port", str(hub.discovery_port))
+        hub_table.add_row("control_port", str(hub.control_port))
+        if hub.velo_port is not None:
+            hub_table.add_row("velo_port", str(hub.velo_port))
+        hub_table.add_row("features", ",".join(hub.features))
+        hub_table.add_row("block_size", str(hub.block_size))
+        hub_table.add_row("max_seq_len", str(hub.max_seq_len))
+        hub_table.add_row("layout", hub.layout)
+        if hub.g2_memory is not None:
+            hub_table.add_row("g2_memory", str(hub.g2_memory))
+        if hub.g2_block is not None:
+            hub_table.add_row("g2_block", str(hub.g2_block))
+        if hub.bind_addr:
+            hub_table.add_row("bind_addr", hub.bind_addr)
+        hub_table.add_row("kv_index_advertise_host", hub.kv_index_advertise_host)
+        if hub.kv_index_zmq_bind:
+            hub_table.add_row("kv_index_zmq_bind", hub.kv_index_zmq_bind)
+        if hub.kvbm_config:
+            hub_table.add_row("kvbm_config", hub.kvbm_config)
+        if hub.kvbm:
+            hub_table.add_row("kvbm", hub.kvbm)
+        console.print(Panel(hub_table, border_style="blue"))
+
+    # --- Mooncake Hub ---
+    if config.mooncake_hub.enabled:
+        hub = config.mooncake_hub
+        hub_table = Table(title="Mooncake Hub", show_lines=False, pad_edge=False)
+        hub_table.add_column("Setting", style="yellow")
+        hub_table.add_column("Value", style="white")
+        hub_table.add_row("rpc_port", str(hub.rpc_port))
+        hub_table.add_row("rpc_address", hub.rpc_address)
+        hub_table.add_row("enable_http_metadata_server", str(hub.enable_http_metadata_server))
+        if hub.enable_http_metadata_server:
+            hub_table.add_row("http_metadata_server_host", hub.http_metadata_server_host)
+            hub_table.add_row("http_metadata_server_port", str(hub.http_metadata_server_port))
+        hub_table.add_row("mode", hub.mode)
+        hub_table.add_row("metadata_server", hub.metadata_server)
+        hub_table.add_row("protocol", hub.protocol)
+        hub_table.add_row("device_name", hub.device_name)
+        hub_table.add_row("global_segment_size", hub.global_segment_size)
+        hub_table.add_row("local_buffer_size", hub.local_buffer_size)
+        hub_table.add_row("enable_offload", str(hub.enable_offload))
+        hub_table.add_row("config_path", f"/logs/{hub.config_filename}")
+        console.print(Panel(hub_table, border_style="blue"))
+
 
 def validate_setup(srtctl_source: Path) -> None:
     """Validate that make setup has been run and required binaries exist.

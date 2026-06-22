@@ -194,3 +194,61 @@ class TestDryRunSrunOptions:
         show_config_details(config)
         output = capsys.readouterr().out
         assert "srun options" not in output
+
+
+class TestDryRunKvbmHub:
+    """Test KVBM hub dry-run visibility."""
+
+    def test_kvbm_hub_config_shown(self, capsys):
+        config = _make_config({
+            "kvbm_hub": {
+                "enabled": True,
+                "discovery_port": 1337,
+                "control_port": 8337,
+                "features": ["indexer", "p2p"],
+                "block_size": 64,
+                "max_seq_len": 262144,
+                "kv_index_advertise_host": "{infra_node_ip}",
+            },
+        })
+
+        show_config_details(config)
+        output = capsys.readouterr().out
+
+        assert "KVBM Hub" in output
+        assert "discovery_port" in output
+        assert "1337" in output
+        assert "control_port" in output
+        assert "8337" in output
+        assert "indexer,p2p" in output
+        assert "{infra_node_ip}" in output
+
+
+class TestDryRunMooncakeHub:
+    """Test Mooncake hub dry-run visibility."""
+
+    def test_mooncake_hub_config_shown(self, capsys):
+        config = _make_config({
+            "mooncake_hub": {
+                "enabled": True,
+                "rpc_port": 50051,
+                "rpc_address": "0.0.0.0",
+                "enable_http_metadata_server": True,
+                "http_metadata_server_port": 8080,
+                "metadata_server": "P2PHANDSHAKE",
+                "protocol": "rdma",
+                "global_segment_size": "480GB",
+                "local_buffer_size": "4GB",
+            },
+        })
+
+        show_config_details(config)
+        output = capsys.readouterr().out
+
+        assert "Mooncake Hub" in output
+        assert "rpc_port" in output
+        assert "50051" in output
+        assert "http_metadata_server_port" in output
+        assert "8080" in output
+        assert "P2PHANDSHAKE" in output
+        assert "480GB" in output

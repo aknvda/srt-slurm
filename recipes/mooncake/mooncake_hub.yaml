@@ -1,0 +1,141 @@
+# https://kvcache-ai.github.io/Mooncake/design/mooncake-store.html
+name: agg_tep2x6_mooncake_hub_p2p
+
+identity:
+  model:
+    repo: nvidia/qwen3-235b-a22b-instruct-2507-nvfp4
+  frameworks:
+    dynamo: 1.2.0
+    vllm: 0.22.0+cu129
+
+model:
+  path: qwen3-235b-a22b-instruct-2507-nvfp4
+  container: dynamo-vllm-kvbm-engine-service-bf5a008fc5f0-mooncake-dmabuf-mrex-cu12-aarch64
+  precision: fp4
+
+resources:
+  gpu_type: gb200
+  agg_nodes: 6
+  agg_workers: 6
+  gpus_per_agg: 2
+  # Allocate one TP2 worker per node so Mooncake's embedded host segment stays below node RAM.
+  gpus_per_node: 2
+
+slurm:
+  time_limit: "00:45:00"
+
+mooncake_hub:
+  enabled: true
+  rpc_port: 50051
+  rpc_address: "0.0.0.0"
+  enable_http_metadata_server: true
+  http_metadata_server_host: "0.0.0.0"
+  http_metadata_server_port: 8080
+  mode: embedded
+  metadata_server: P2PHANDSHAKE
+  protocol: rdma
+  # Physical GPU -> RNIC mapping from GB200 topology:
+  # This TP2 recipe uses GPU0/GPU1 on each node, so keep Mooncake on the rail-local HCAs.
+  device_name: "mlx5_0,mlx5_1"
+  # Embedded mode allocates this much host memory per TP rank.
+  global_segment_size: 40GB
+  local_buffer_size: 4GB
+  enable_offload: false
+  startup_timeout_seconds: 120
+  environment:
+    GLOG_v: "1"
+    # Keep Mooncake on the CUDA DMA-BUF GPUDirect RDMA path instead of legacy nvidia-peermem.
+    WITH_NVIDIA_PEERMEM: "0"
+
+backend:
+  type: vllm
+  connector: none
+  kv_events_config:
+    aggregated: true
+  aggregated_environment:
+    OTEL_SERVICE_NAME: "dynamo-agg-tep2x6-mooncake-p2p-conc{concurrency}"
+    # OpenTelemetry tracing (vLLM uses env vars, not engine flags)
+    OTEL_EXPORT_ENABLED: "true"
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://10.57.209.4:4317"
+    VLLM_USE_FLASHINFER_MOE_FP4: "1"
+    DYN_TOOL_CALL_PARSER: hermes
+    DYN_REASONING_PARSER: qwen3
+    # MooncakeStoreConnector requires this runtime-generated JSON file.
+    MOONCAKE_CONFIG_PATH: /logs/mooncake_config.json
+    # Cross-process block hashes must be stable for shared prefix-cache hits.
+    PYTHONHASHSEED: "0"
+    # Keep explicit device_name active; MC_MS_AUTO_DISC=1 overrides device_name
+    # and auto-discovers all HCAs, which breaks DMA-BUF registration on non-local rails.
+    MC_MS_AUTO_DISC: "0"
+    VLLM_MOONCAKE_STORE_TIER_LOG: "1"
+    # Mooncake uses CUDA DMA-BUF by default when this is unset or 0; set it explicitly for clarity.
+    WITH_NVIDIA_PEERMEM: "0"
+  vllm_config:
+    aggregated:
+      # parallelisms
+      tensor-parallel-size: 2
+      enable-expert-parallel: true
+      # memory stuff
+      gpu-memory-utilization: 0.85
+      max-model-len: 262144
+      block-size: 64
+      max-num-batched-tokens: 32768
+      # kv cache stuff
+      enable-prefix-caching: true
+      kv-cache-dtype: fp8
+      # Do not set kv-offloading-size here: vLLM switches to OffloadingConnector
+      # before MooncakeStoreConnector can register with mooncake_master.
+      kv-transfer-config: '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_both","kv_connector_extra_config":{"load_async":true}}'
+      # misc stuff
+      trust-remote-code: true
+      otlp-traces-endpoint: "http://10.57.209.4:4317"
+
+frontend:
+  type: dynamo
+  args:
+    router-mode: kv
+    router-reset-states: true
+  enable_multiple_frontends: false
+  env:
+    OTEL_SERVICE_NAME: "dynamo-frontend-tep2x6-mooncake-p2p-conc{concurrency}"
+    OTEL_EXPORT_ENABLED: "true"
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://10.57.209.4:4317"
+
+health_check:
+  max_attempts: 500
+  interval_seconds: 10
+
+dynamo:
+  install: false
+
+infra:
+  etcd_nats_dedicated_node: false
+  nats_max_payload_mb: 24
+
+observability:
+  enable_otel: true
+  otel_endpoint: "http://10.57.209.4:4317"
+
+sweep:
+  concurrency: [36, 60, 80, 96]
+
+extra_mount:
+  - "traces:/traces"
+
+benchmark:
+  type: trace-replay
+  trace_file: /traces/mooncake_conversation_trace.jsonl
+  concurrencies: "{concurrency}"
+  ttft_threshold_ms: 5000
+  itl_threshold_ms: 10
+  aiperf_package: "git+https://github.com/cquil11/aiperf.git@062a5de92c8ac8a0a6dd5d2a7fb9a539a147f3d9"
+  aiperf_args:
+    fixed-schedule: true
+    benchmark-duration: 1800 # 30min
+    benchmark-grace-period: 30
+    request-timeout-seconds: 1200
+    workers-max: 200
+    record-processors: 8
+    profile-export-level: raw
+    concurrency-ramp-duration: 120
+    export-http-trace: true

@@ -342,6 +342,8 @@ class VLLMProtocol:
 
         mode = process.endpoint_mode
         config = self.get_config_for_mode(mode)
+        placeholders = _runtime_placeholders(process, runtime)
+        config = _replace_known_placeholders(config, placeholders)
 
         # Determine if multi-node
         endpoint_nodes = list(dict.fromkeys(p.node for p in endpoint_processes))
@@ -383,6 +385,7 @@ class VLLMProtocol:
         # Pop from config so it doesn't get added again by _config_to_cli_args.
         mode_connector = config.pop("connector", None)
         connector = mode_connector if mode_connector is not None else self.connector
+        connector = _replace_known_placeholders(connector, placeholders)
 
         if connector and connector not in ("null", "none", None):
             kv_transfer_cfg = _connector_to_kv_transfer_config(connector)
@@ -465,6 +468,56 @@ def _connector_to_kv_transfer_config(connector: str) -> str:
     if preset is not None:
         return json.dumps(preset)
     return connector
+
+
+def _runtime_placeholders(process: Process, runtime: RuntimeContext) -> dict[str, str]:
+    """Build known runtime placeholder values for recipe-provided strings."""
+    nodes = getattr(runtime, "nodes", None)
+    worker_nodes_raw = getattr(nodes, "worker", ()) if nodes is not None else ()
+    try:
+        worker_nodes = tuple(worker_nodes_raw or ())
+    except TypeError:
+        worker_nodes = ()
+
+    node_id = process.endpoint_index
+    if process.node in worker_nodes:
+        node_id = worker_nodes.index(process.node)
+
+    return {
+        "node": process.node,
+        "node_id": str(node_id),
+        "endpoint_index": str(process.endpoint_index),
+        "node_rank": str(process.node_rank),
+        "infra_node": str(getattr(nodes, "infra", "")) if nodes is not None else "",
+        "infra_node_ip": str(getattr(runtime, "infra_node_ip", "")),
+        "head_node": str(getattr(nodes, "head", "")) if nodes is not None else "",
+        "head_node_ip": str(getattr(runtime, "head_node_ip", "")),
+        "job_id": str(getattr(runtime, "job_id", "")),
+        "run_name": str(getattr(runtime, "run_name", "")),
+        "log_dir": str(getattr(runtime, "log_dir", "")),
+        "model_path": str(getattr(runtime, "model_path", "")),
+        "container_image": str(getattr(runtime, "container_image", "")),
+        "gpus_per_node": str(getattr(runtime, "gpus_per_node", "")),
+    }
+
+
+def _replace_known_placeholders(value: Any, placeholders: dict[str, str]) -> Any:
+    """Replace only known {placeholders}; leave unrelated JSON braces untouched."""
+    if isinstance(value, str):
+        result = value
+        for name, replacement in placeholders.items():
+            result = result.replace(f"{{{name}}}", replacement)
+        return result
+    if isinstance(value, dict):
+        return {
+            _replace_known_placeholders(key, placeholders): _replace_known_placeholders(val, placeholders)
+            for key, val in value.items()
+        }
+    if isinstance(value, list):
+        return [_replace_known_placeholders(item, placeholders) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_replace_known_placeholders(item, placeholders) for item in value)
+    return value
 
 
 def _config_to_cli_args(config: dict[str, Any]) -> list[str]:

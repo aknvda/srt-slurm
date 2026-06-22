@@ -875,9 +875,13 @@ class DynamoConfig:
     def get_install_commands(self) -> str:
         """Get the bash commands to install dynamo."""
         if self.version is not None:
+            install_packages = (
+                "pip install --break-system-packages --quiet --extra-index-url https://pypi.nvidia.com "
+                f"ai-dynamo-runtime=={self.version} ai-dynamo=={self.version}"
+            )
             return (
                 f"echo 'Installing dynamo {self.version}...' && "
-                f"pip install --break-system-packages --quiet --extra-index-url https://pypi.nvidia.com ai-dynamo-runtime=={self.version} ai-dynamo=={self.version} && "
+                f"{install_packages} && "
                 f"echo 'Dynamo {self.version} installed'"
             )
 
@@ -886,9 +890,13 @@ class DynamoConfig:
         checkout_cmd = f"git checkout {self.hash}" if self.hash else ""
 
         # Original SGLang container path
+        rustup_install = (
+            "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs "
+            "| sh -s -- -y --default-toolchain stable -q"
+        )
         sglang = (
             "apt-get update -qq && apt-get install -y -qq libclang-dev curl > /dev/null 2>&1 && "
-            "if ! command -v cargo &>/dev/null; then curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable -q && source $HOME/.cargo/env; fi && "
+            f"if ! command -v cargo &>/dev/null; then {rustup_install} && source $HOME/.cargo/env; fi && "
             "cd /sgl-workspace/ && "
             "git clone https://github.com/ai-dynamo/dynamo.git && "
             "cd dynamo && "
@@ -997,6 +1005,64 @@ class InfraConfig:
     Schema: ClassVar[type[Schema]] = Schema
 
 
+@dataclass(frozen=True)
+class KvbmHubConfig:
+    """KVBM v2 hub service configuration.
+
+    The hub is launched inside the Slurm allocation before vLLM workers so
+    KVBM workers can register, publish index data, and perform P2P discovery.
+    """
+
+    enabled: bool = False
+    discovery_port: int = 1337
+    control_port: int = 8337
+    velo_port: int | None = 1338
+    features: tuple[str, ...] = ("indexer", "p2p")
+    block_size: int = 64
+    max_seq_len: int = 262144
+    layout: str = "operational"
+    g2_memory: int | None = None
+    g2_block: int | None = None
+    bind_addr: str | None = None
+    kv_index_advertise_host: str = "{infra_node_ip}"
+    kv_index_zmq_bind: str | None = None
+    kvbm_config: str | None = None
+    kvbm: str | None = None
+    startup_timeout_seconds: int = 120
+    environment: dict[str, str] = field(default_factory=dict)
+
+    Schema: ClassVar[type[Schema]] = Schema
+
+
+@dataclass(frozen=True)
+class MooncakeHubConfig:
+    """Mooncake Store master service configuration.
+
+    The master is launched inside the Slurm allocation before vLLM workers.
+    Workers read a generated Mooncake JSON config through MOONCAKE_CONFIG_PATH.
+    """
+
+    enabled: bool = False
+    rpc_port: int = 50051
+    rpc_address: str = "0.0.0.0"
+    enable_http_metadata_server: bool = True
+    http_metadata_server_host: str = "0.0.0.0"
+    http_metadata_server_port: int = 8080
+    mode: str = "embedded"
+    metadata_server: str = "P2PHANDSHAKE"
+    protocol: str = "rdma"
+    device_name: str = ""
+    global_segment_size: str = "80GB"
+    local_buffer_size: str = "4GB"
+    enable_offload: bool = False
+    startup_timeout_seconds: int = 120
+    config_filename: str = "mooncake_config.json"
+    config_extra: dict[str, Any] = field(default_factory=dict)
+    environment: dict[str, str] = field(default_factory=dict)
+
+    Schema: ClassVar[type[Schema]] = Schema
+
+
 # ============================================================================
 # Main Configuration Dataclass
 # ============================================================================
@@ -1026,6 +1092,8 @@ class SrtConfig:
     health_check: HealthCheckConfig = field(default_factory=HealthCheckConfig)
     infra: InfraConfig = field(default_factory=InfraConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+    kvbm_hub: KvbmHubConfig = field(default_factory=KvbmHubConfig)
+    mooncake_hub: MooncakeHubConfig = field(default_factory=MooncakeHubConfig)
 
     environment: dict[str, str] = field(default_factory=dict)
     container_mounts: dict[
@@ -1051,7 +1119,49 @@ class SrtConfig:
 
     def __post_init__(self):
         """Validate configuration after initialization."""
+        self._validate_hub_config()
+        self._validate_mooncake_hub_config()
         self._validate_profiling()
+
+    def _validate_hub_config(self):
+        """Validate mutually exclusive hub service selections."""
+        if self.kvbm_hub.enabled and self.mooncake_hub.enabled:
+            raise ValidationError("Only one of kvbm_hub or mooncake_hub can be enabled.")
+
+    def _validate_mooncake_hub_config(self):
+        """Validate Mooncake Store settings that affect vLLM connector selection."""
+        if not self.mooncake_hub.enabled or not isinstance(self.backend, VLLMProtocol):
+            return
+
+        if self.mooncake_hub.protocol == "rdma" and self.mooncake_hub.device_name.strip():
+            mooncake_envs = (
+                ("environment", self.environment),
+                ("mooncake_hub.environment", self.mooncake_hub.environment),
+                ("backend.prefill_environment", self.backend.prefill_environment),
+                ("backend.decode_environment", self.backend.decode_environment),
+                ("backend.aggregated_environment", self.backend.aggregated_environment),
+            )
+            for env_name, env_values in mooncake_envs:
+                if str(env_values.get("MC_MS_AUTO_DISC", "0")).strip() == "1":
+                    raise ValidationError(
+                        "mooncake_hub.device_name is explicitly set, but "
+                        f"{env_name}.MC_MS_AUTO_DISC=1 would override it and auto-discover all HCAs. "
+                        "Set MC_MS_AUTO_DISC=0 or remove device_name."
+                    )
+
+        for mode_name, mode_config in (
+            ("prefill", self.backend.vllm_config.prefill if self.backend.vllm_config else None),
+            ("decode", self.backend.vllm_config.decode if self.backend.vllm_config else None),
+            ("aggregated", self.backend.vllm_config.aggregated if self.backend.vllm_config else None),
+        ):
+            if not mode_config:
+                continue
+            if "kv-offloading-size" in mode_config or "kv_offloading_size" in mode_config:
+                raise ValidationError(
+                    "mooncake_hub cannot be combined with vLLM kv-offloading-size "
+                    f"in vllm_config.{mode_name}; kv-offloading-size selects OffloadingConnector "
+                    "instead of MooncakeStoreConnector."
+                )
 
     def _validate_profiling(self):
         """Validate profiling configuration matches serving mode."""

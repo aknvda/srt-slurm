@@ -4,6 +4,8 @@
 """Tests for configuration loading and validation."""
 
 import glob
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -204,6 +206,369 @@ class TestDynamoConfig:
 
         with pytest.raises(ValueError, match="Cannot specify both"):
             DynamoConfig(hash="abc123", top_of_tree=True)
+
+
+class TestKvbmHubConfig:
+    """Tests for KVBM hub orchestration config."""
+
+    def test_kvbm_hub_config_loads_from_yaml(self, tmp_path):
+        """KVBM hub config is optional but can be enabled from recipe YAML."""
+        recipe = tmp_path / "kvbm_hub.yaml"
+        recipe.write_text(
+            """
+name: kvbm-hub-test
+model:
+  path: /tmp/model
+  container: /tmp/container.sqsh
+  precision: fp4
+resources:
+  gpu_type: gb200
+  agg_nodes: 1
+  agg_workers: 1
+  gpus_per_agg: 2
+backend:
+  type: vllm
+kvbm_hub:
+  enabled: true
+  discovery_port: 1337
+  control_port: 8337
+  velo_port: 1338
+  features: [indexer, p2p]
+  block_size: 64
+  max_seq_len: 262144
+  layout: operational
+  g2_memory: 480
+  kv_index_advertise_host: "{infra_node_ip}"
+""",
+        )
+
+        config = SrtConfig.from_yaml(recipe)
+
+        assert config.kvbm_hub.enabled is True
+        assert config.kvbm_hub.discovery_port == 1337
+        assert config.kvbm_hub.control_port == 8337
+        assert config.kvbm_hub.velo_port == 1338
+        assert config.kvbm_hub.features == ("indexer", "p2p")
+        assert config.kvbm_hub.block_size == 64
+        assert config.kvbm_hub.max_seq_len == 262144
+        assert config.kvbm_hub.g2_memory == 480
+        assert config.kvbm_hub.kv_index_advertise_host == "{infra_node_ip}"
+
+    def test_kvbm_hub_stage_launches_hub_and_waits_for_control_port(self, tmp_path):
+        """The orchestrator launches kvbm_hub before workers and waits for readiness."""
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from srtctl.backends import VLLMProtocol
+        from srtctl.cli.do_sweep import SweepOrchestrator
+        from srtctl.core.processes import ManagedProcess, ProcessRegistry
+        from srtctl.core.schema import KvbmHubConfig, ModelConfig, ResourceConfig, SrtConfig
+
+        config = SrtConfig(
+            name="kvbm-hub-test",
+            model=ModelConfig(path="/tmp/model", container="/tmp/container.sqsh", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200", agg_nodes=1, agg_workers=1, _explicit_gpus_per_agg=2),
+            backend=VLLMProtocol(),
+            kvbm_hub=KvbmHubConfig(
+                enabled=True,
+                discovery_port=1337,
+                control_port=8337,
+                velo_port=1338,
+                features=("indexer", "p2p"),
+                block_size=64,
+                max_seq_len=262144,
+                layout="operational",
+                g2_memory=480,
+                kv_index_advertise_host="{infra_node_ip}",
+                startup_timeout_seconds=30,
+            ),
+        )
+        runtime = MagicMock()
+        runtime.nodes.infra = "node0"
+        runtime.infra_node_ip = "10.10.0.7"
+        runtime.container_image = Path("/tmp/container.sqsh")
+        runtime.container_mounts = {}
+        runtime.log_dir = tmp_path
+
+        fake_popen = MagicMock()
+        with (
+            patch("srtctl.cli.do_sweep.start_srun_process", return_value=fake_popen) as start_srun,
+            patch("srtctl.cli.do_sweep.wait_for_port", return_value=True) as wait_for_port,
+        ):
+            orchestrator = SweepOrchestrator(config=config, runtime=runtime)
+            managed = orchestrator.start_kvbm_hub(ProcessRegistry("12345"))
+
+        command = start_srun.call_args.kwargs["command"]
+        assert command[:1] == ["kvbm_hub"]
+        assert command[command.index("--discovery-port") + 1] == "1337"
+        assert command[command.index("--control-port") + 1] == "8337"
+        assert command[command.index("--velo-port") + 1] == "1338"
+        assert command[command.index("--features") + 1] == "indexer,p2p"
+        assert command[command.index("--block-size") + 1] == "64"
+        assert command[command.index("--max-seq-len") + 1] == "262144"
+        assert command[command.index("--layout") + 1] == "operational"
+        assert command[command.index("--g2-memory") + 1] == "480"
+        assert command[command.index("--kv-index-advertise-host") + 1] == "10.10.0.7"
+        assert start_srun.call_args.kwargs["nodelist"] == ["node0"]
+        assert start_srun.call_args.kwargs["container_image"] == "/tmp/container.sqsh"
+        wait_for_port.assert_called_once_with("node0", 8337, timeout=30)
+        assert isinstance(managed, ManagedProcess)
+        assert managed.name == "kvbm_hub"
+
+
+class TestMooncakeHubConfig:
+    """Tests for Mooncake Store master orchestration config."""
+
+    def test_mooncake_hub_config_loads_from_yaml(self, tmp_path):
+        """Mooncake hub config is optional but can be enabled from recipe YAML."""
+        recipe = tmp_path / "mooncake_hub.yaml"
+        recipe.write_text(
+            """
+name: mooncake-hub-test
+model:
+  path: /tmp/model
+  container: /tmp/container.sqsh
+  precision: fp4
+resources:
+  gpu_type: gb200
+  agg_nodes: 1
+  agg_workers: 1
+  gpus_per_agg: 2
+backend:
+  type: vllm
+mooncake_hub:
+  enabled: true
+  rpc_port: 50051
+  rpc_address: 0.0.0.0
+  enable_http_metadata_server: true
+  http_metadata_server_host: 0.0.0.0
+  http_metadata_server_port: 8080
+  metadata_server: P2PHANDSHAKE
+  protocol: rdma
+  device_name: ""
+  global_segment_size: 480GB
+  local_buffer_size: 4GB
+  enable_offload: false
+""",
+        )
+
+        config = SrtConfig.from_yaml(recipe)
+
+        assert config.mooncake_hub.enabled is True
+        assert config.mooncake_hub.rpc_port == 50051
+        assert config.mooncake_hub.rpc_address == "0.0.0.0"
+        assert config.mooncake_hub.enable_http_metadata_server is True
+        assert config.mooncake_hub.http_metadata_server_host == "0.0.0.0"
+        assert config.mooncake_hub.http_metadata_server_port == 8080
+        assert config.mooncake_hub.metadata_server == "P2PHANDSHAKE"
+        assert config.mooncake_hub.protocol == "rdma"
+        assert config.mooncake_hub.global_segment_size == "480GB"
+        assert config.mooncake_hub.local_buffer_size == "4GB"
+
+    def test_mooncake_hub_stage_launches_master_and_writes_worker_config(self, tmp_path):
+        """The orchestrator starts mooncake_master and writes the vLLM Mooncake JSON."""
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from srtctl.backends import VLLMProtocol
+        from srtctl.cli.do_sweep import SweepOrchestrator
+        from srtctl.core.processes import ManagedProcess, ProcessRegistry
+        from srtctl.core.schema import ModelConfig, MooncakeHubConfig, ResourceConfig, SrtConfig
+
+        config = SrtConfig(
+            name="mooncake-hub-test",
+            model=ModelConfig(path="/tmp/model", container="/tmp/container.sqsh", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200", agg_nodes=1, agg_workers=1, _explicit_gpus_per_agg=2),
+            backend=VLLMProtocol(),
+            mooncake_hub=MooncakeHubConfig(
+                enabled=True,
+                rpc_port=50051,
+                rpc_address="0.0.0.0",
+                enable_http_metadata_server=True,
+                http_metadata_server_host="0.0.0.0",
+                http_metadata_server_port=8080,
+                metadata_server="P2PHANDSHAKE",
+                protocol="rdma",
+                device_name="",
+                global_segment_size="480GB",
+                local_buffer_size="4GB",
+                startup_timeout_seconds=30,
+                environment={"GLOG_v": "1"},
+            ),
+        )
+        runtime = MagicMock()
+        runtime.nodes.infra = "node0"
+        runtime.infra_node_ip = "10.10.0.7"
+        runtime.container_image = Path("/tmp/container.sqsh")
+        runtime.container_mounts = {}
+        runtime.log_dir = tmp_path
+
+        fake_popen = MagicMock()
+        with (
+            patch.object(SweepOrchestrator, "_check_mooncake_rdma_prereqs") as check_rdma,
+            patch("srtctl.cli.do_sweep.start_srun_process", return_value=fake_popen) as start_srun,
+            patch("srtctl.cli.do_sweep.wait_for_port", return_value=True) as wait_for_port,
+        ):
+            orchestrator = SweepOrchestrator(config=config, runtime=runtime)
+            managed = orchestrator.start_mooncake_hub(ProcessRegistry("12345"))
+
+        check_rdma.assert_called_once_with()
+        command = start_srun.call_args.kwargs["command"]
+        assert command[:1] == ["mooncake_master"]
+        assert command[command.index("--rpc_port") + 1] == "50051"
+        assert command[command.index("--rpc_address") + 1] == "0.0.0.0"
+        assert "--enable_http_metadata_server=true" in command
+        assert command[command.index("--http_metadata_server_host") + 1] == "0.0.0.0"
+        assert command[command.index("--http_metadata_server_port") + 1] == "8080"
+        assert start_srun.call_args.kwargs["nodelist"] == ["node0"]
+        assert start_srun.call_args.kwargs["container_image"] == "/tmp/container.sqsh"
+        assert start_srun.call_args.kwargs["env_to_set"] == {"GLOG_v": "1"}
+        wait_for_port.assert_called_once_with("node0", 50051, timeout=30)
+
+        config_file = tmp_path / "mooncake_config.json"
+        mooncake_config = json.loads(config_file.read_text())
+        assert mooncake_config == {
+            "mode": "embedded",
+            "metadata_server": "P2PHANDSHAKE",
+            "master_server_address": "10.10.0.7:50051",
+            "global_segment_size": "480GB",
+            "local_buffer_size": "4GB",
+            "protocol": "rdma",
+            "device_name": "",
+            "enable_offload": False,
+        }
+        assert isinstance(managed, ManagedProcess)
+        assert managed.name == "mooncake_hub"
+
+    def test_mooncake_hub_rdma_preflight_allows_dmabuf_path(self):
+        """Mooncake RDMA defaults to CUDA DMA-BUF instead of requiring nvidia-peermem."""
+        from unittest.mock import MagicMock, patch
+
+        from srtctl.backends import VLLMProtocol
+        from srtctl.cli.do_sweep import SweepOrchestrator
+        from srtctl.core.schema import ModelConfig, MooncakeHubConfig, ResourceConfig, SrtConfig
+
+        config = SrtConfig(
+            name="mooncake-hub-test",
+            model=ModelConfig(path="/tmp/model", container="/tmp/container.sqsh", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200", agg_nodes=2, agg_workers=2, _explicit_gpus_per_agg=2),
+            backend=VLLMProtocol(),
+            mooncake_hub=MooncakeHubConfig(enabled=True, protocol="rdma"),
+        )
+        runtime = MagicMock()
+        runtime.nodes.worker = ("node0", "node1")
+        runtime.nodes.infra = "node0"
+
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with (
+            patch("srtctl.cli.do_sweep.get_slurm_job_id", return_value="12345"),
+            patch("srtctl.cli.do_sweep.subprocess.run", return_value=completed) as run,
+        ):
+            orchestrator = SweepOrchestrator(config=config, runtime=runtime)
+            orchestrator._check_mooncake_rdma_prereqs()
+
+        cmd = run.call_args.args[0]
+        assert cmd[:4] == ["srun", "--jobid", "12345", "--overlap"]
+        assert cmd[cmd.index("--nodelist") + 1] == "node0,node1"
+        check_script = cmd[-1]
+        assert "nvidia_peermem" not in check_script
+        assert "/dev/infiniband/uverbs" in check_script
+
+    def test_mooncake_hub_rdma_preflight_requires_peer_memory_when_requested(self):
+        """Explicit legacy peermem mode still fails early if the module is unavailable."""
+        from unittest.mock import MagicMock, patch
+
+        from srtctl.backends import VLLMProtocol
+        from srtctl.cli.do_sweep import SweepOrchestrator
+        from srtctl.core.schema import ModelConfig, MooncakeHubConfig, ResourceConfig, SrtConfig
+
+        config = SrtConfig(
+            name="mooncake-hub-test",
+            model=ModelConfig(path="/tmp/model", container="/tmp/container.sqsh", precision="fp4"),
+            resources=ResourceConfig(gpu_type="gb200", agg_nodes=2, agg_workers=2, _explicit_gpus_per_agg=2),
+            backend=VLLMProtocol(),
+            mooncake_hub=MooncakeHubConfig(
+                enabled=True,
+                protocol="rdma",
+                environment={"WITH_NVIDIA_PEERMEM": "1"},
+            ),
+        )
+        runtime = MagicMock()
+        runtime.nodes.worker = ("node0", "node1")
+        runtime.nodes.infra = "node0"
+
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="node0: missing nvidia_peermem/nv_peer_mem\n",
+            stderr="",
+        )
+        with (
+            patch("srtctl.cli.do_sweep.get_slurm_job_id", return_value="12345"),
+            patch("srtctl.cli.do_sweep.subprocess.run", return_value=completed),
+        ):
+            orchestrator = SweepOrchestrator(config=config, runtime=runtime)
+            with pytest.raises(RuntimeError, match="WITH_NVIDIA_PEERMEM=1"):
+                orchestrator._check_mooncake_rdma_prereqs()
+
+    def test_mooncake_hub_rejects_vllm_kv_offloading_size(self, tmp_path):
+        """Mooncake Store must not be masked by vLLM's native offload connector."""
+        recipe = tmp_path / "mooncake_hub_offload_conflict.yaml"
+        recipe.write_text(
+            """
+name: mooncake-hub-offload-conflict
+model:
+  path: /tmp/model
+  container: /tmp/container.sqsh
+  precision: fp4
+resources:
+  gpu_type: gb200
+  agg_nodes: 1
+  agg_workers: 1
+  gpus_per_agg: 2
+backend:
+  type: vllm
+  connector: none
+  vllm_config:
+    aggregated:
+      kv-offloading-size: 480
+      kv-transfer-config: '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_both"}'
+mooncake_hub:
+  enabled: true
+""",
+        )
+
+        with pytest.raises(Exception, match="kv-offloading-size selects OffloadingConnector"):
+            SrtConfig.from_yaml(recipe)
+
+    def test_mooncake_hub_rejects_auto_discovery_override_with_explicit_device(self, tmp_path):
+        """MC_MS_AUTO_DISC=1 overrides device_name and can pull in non-local HCAs."""
+        recipe = tmp_path / "mooncake_hub_auto_discovery_conflict.yaml"
+        recipe.write_text(
+            """
+name: mooncake-hub-auto-discovery-conflict
+model:
+  path: /tmp/model
+  container: /tmp/container.sqsh
+  precision: fp4
+resources:
+  gpu_type: gb200
+  agg_nodes: 1
+  agg_workers: 1
+  gpus_per_agg: 2
+backend:
+  type: vllm
+  aggregated_environment:
+    MC_MS_AUTO_DISC: "1"
+mooncake_hub:
+  enabled: true
+  protocol: rdma
+  device_name: mlx5_0,mlx5_1
+""",
+        )
+
+        with pytest.raises(Exception, match="MC_MS_AUTO_DISC=1"):
+            SrtConfig.from_yaml(recipe)
 
 
 class TestSGLangProtocol:
@@ -598,109 +963,112 @@ class TestWorkerEnvironmentTemplating:
                 return result
             raise subprocess.CalledProcessError(1, cmd)
 
-        with patch.dict(os.environ, slurm_env):
-            with patch("subprocess.run", mock_scontrol):
-                with patch("srtctl.core.slurm.get_hostname_ip", return_value="10.0.0.1"):
-                    # Create config with templated environment variables
-                    config = SrtConfig(
-                        name="test",
-                        model=ModelConfig(
-                            path=str(model_path),
-                            container=str(container_path),
-                            precision="fp8",
-                        ),
-                        resources=ResourceConfig(
-                            gpu_type="h100",
-                            gpus_per_node=8,
-                            prefill_nodes=1,
-                            decode_nodes=2,
-                        ),
-                        backend=SGLangProtocol(
-                            prefill_environment={
-                                "SGLANG_DG_CACHE_DIR": "/configs/dg-{node_id}",
-                                "WORKER_NODE": "{node}",
-                            },
-                            decode_environment={
-                                "SGLANG_DG_CACHE_DIR": "/configs/dg-{node_id}",
-                            },
-                        ),
-                    )
+        with (
+            patch.dict(os.environ, slurm_env),
+            patch("subprocess.run", mock_scontrol),
+            patch("srtctl.core.slurm.get_hostname_ip", return_value="10.0.0.1"),
+        ):
+            # Create config with templated environment variables
+            config = SrtConfig(
+                name="test",
+                model=ModelConfig(
+                    path=str(model_path),
+                    container=str(container_path),
+                    precision="fp8",
+                ),
+                resources=ResourceConfig(
+                    gpu_type="h100",
+                    gpus_per_node=8,
+                    prefill_nodes=1,
+                    decode_nodes=2,
+                ),
+                backend=SGLangProtocol(
+                    prefill_environment={
+                        "SGLANG_DG_CACHE_DIR": "/configs/dg-{node_id}",
+                        "WORKER_NODE": "{node}",
+                    },
+                    decode_environment={
+                        "SGLANG_DG_CACHE_DIR": "/configs/dg-{node_id}",
+                    },
+                ),
+            )
 
-                    runtime = RuntimeContext.from_config(config, job_id="12345")
+            runtime = RuntimeContext.from_config(config, job_id="12345")
 
-                    # Create a mock worker stage
-                    class MockWorkerStage(WorkerStageMixin):
-                        def __init__(self, config, runtime):
-                            self.config = config
-                            self.runtime = runtime
+            # Create a mock worker stage
+            class MockWorkerStage(WorkerStageMixin):
+                def __init__(self, config, runtime):
+                    self.config = config
+                    self.runtime = runtime
 
-                    worker_stage = MockWorkerStage(config, runtime)
+            worker_stage = MockWorkerStage(config, runtime)
 
-                    # Create test processes on different nodes
-                    processes = [
-                        Process(
-                            node="gpu-01",
-                            gpu_indices=frozenset([0, 1, 2, 3, 4, 5, 6, 7]),
-                            sys_port=8081,
-                            http_port=30000,
-                            endpoint_mode="prefill",
-                            endpoint_index=0,
-                            node_rank=0,
-                        ),
-                        Process(
-                            node="gpu-02",
-                            gpu_indices=frozenset([0, 1, 2, 3, 4, 5, 6, 7]),
-                            sys_port=8082,
-                            http_port=30001,
-                            endpoint_mode="decode",
-                            endpoint_index=0,
-                            node_rank=0,
-                        ),
-                        Process(
-                            node="gpu-03",
-                            gpu_indices=frozenset([0, 1, 2, 3, 4, 5, 6, 7]),
-                            sys_port=8083,
-                            http_port=30002,
-                            endpoint_mode="decode",
-                            endpoint_index=1,
-                            node_rank=0,
-                        ),
-                    ]
+            # Create test processes on different nodes
+            processes = [
+                Process(
+                    node="gpu-01",
+                    gpu_indices=frozenset([0, 1, 2, 3, 4, 5, 6, 7]),
+                    sys_port=8081,
+                    http_port=30000,
+                    endpoint_mode="prefill",
+                    endpoint_index=0,
+                    node_rank=0,
+                ),
+                Process(
+                    node="gpu-02",
+                    gpu_indices=frozenset([0, 1, 2, 3, 4, 5, 6, 7]),
+                    sys_port=8082,
+                    http_port=30001,
+                    endpoint_mode="decode",
+                    endpoint_index=0,
+                    node_rank=0,
+                ),
+                Process(
+                    node="gpu-03",
+                    gpu_indices=frozenset([0, 1, 2, 3, 4, 5, 6, 7]),
+                    sys_port=8083,
+                    http_port=30002,
+                    endpoint_mode="decode",
+                    endpoint_index=1,
+                    node_rank=0,
+                ),
+            ]
 
-                    # Mock backend command builder and srun process to capture environment variables
-                    mock_backend = MagicMock()
-                    mock_backend.get_environment_for_mode.side_effect = config.backend.get_environment_for_mode
-                    mock_backend.build_worker_command.return_value = ["echo", "test"]
+            # Mock backend command builder and srun process to capture environment variables
+            mock_backend = MagicMock()
+            mock_backend.get_environment_for_mode.side_effect = config.backend.get_environment_for_mode
+            mock_backend.build_worker_command.return_value = ["echo", "test"]
 
-                    with patch.object(worker_stage, "config") as mock_config:
-                        mock_config.backend = mock_backend
-                        mock_config.profiling = config.profiling
+            with (
+                patch.object(worker_stage, "config") as mock_config,
+                patch("srtctl.cli.mixins.worker_stage.start_srun_process") as mock_srun,
+            ):
+                mock_config.backend = mock_backend
+                mock_config.profiling = config.profiling
+                mock_srun.return_value = MagicMock()
 
-                        with patch("srtctl.cli.mixins.worker_stage.start_srun_process") as mock_srun:
-                            mock_srun.return_value = MagicMock()
+                # Test prefill worker on gpu-01 (index 0)
+                worker_stage.start_worker(processes[0], [])
+                call_kwargs = mock_srun.call_args.kwargs
+                env_vars = call_kwargs.get("env_to_set", {})
 
-                            # Test prefill worker on gpu-01 (index 0)
-                            worker_stage.start_worker(processes[0], [])
-                            call_kwargs = mock_srun.call_args.kwargs
-                            env_vars = call_kwargs.get("env_to_set", {})
+                assert "SGLANG_DG_CACHE_DIR" in env_vars
+                assert env_vars["SGLANG_DG_CACHE_DIR"] == "/configs/dg-0"
+                assert env_vars["WORKER_NODE"] == "gpu-01"
 
-                            assert "SGLANG_DG_CACHE_DIR" in env_vars
-                            assert env_vars["SGLANG_DG_CACHE_DIR"] == "/configs/dg-0"
-                            assert env_vars["WORKER_NODE"] == "gpu-01"
+                # Test decode worker on gpu-02 (index 1)
+                worker_stage.start_worker(processes[1], [])
+                call_kwargs = mock_srun.call_args.kwargs
+                env_vars = call_kwargs.get("env_to_set", {})
 
-                            # Test decode worker on gpu-02 (index 1)
-                            worker_stage.start_worker(processes[1], [])
-                            call_kwargs = mock_srun.call_args.kwargs
-                            env_vars = call_kwargs.get("env_to_set", {})
+                assert env_vars["SGLANG_DG_CACHE_DIR"] == "/configs/dg-1"
 
-                            assert env_vars["SGLANG_DG_CACHE_DIR"] == "/configs/dg-1"
+                # Test decode worker on gpu-03 (index 2)
+                worker_stage.start_worker(processes[2], [])
+                call_kwargs = mock_srun.call_args.kwargs
+                env_vars = call_kwargs.get("env_to_set", {})
 
-                            # Test decode worker on gpu-03 (index 2)
-                            worker_stage.start_worker(processes[2], [])
-                            call_kwargs = mock_srun.call_args.kwargs
-                            env_vars = call_kwargs.get("env_to_set", {})
-
-                            assert env_vars["SGLANG_DG_CACHE_DIR"] == "/configs/dg-2"
+                assert env_vars["SGLANG_DG_CACHE_DIR"] == "/configs/dg-2"
 
     def test_environment_variable_unsupported_placeholder(self, monkeypatch, tmp_path):
         """Test that unsupported placeholders like {foo} remain unchanged and don't throw errors."""
@@ -737,77 +1105,80 @@ class TestWorkerEnvironmentTemplating:
                 return result
             raise subprocess.CalledProcessError(1, cmd)
 
-        with patch.dict(os.environ, slurm_env):
-            with patch("subprocess.run", mock_scontrol):
-                with patch("srtctl.core.slurm.get_hostname_ip", return_value="10.0.0.1"):
-                    # Create config with unsupported template placeholders
-                    config = SrtConfig(
-                        name="test",
-                        model=ModelConfig(
-                            path=str(model_path),
-                            container=str(container_path),
-                            precision="fp8",
-                        ),
-                        resources=ResourceConfig(
-                            gpu_type="h100",
-                            gpus_per_node=8,
-                            prefill_nodes=1,
-                            decode_nodes=1,
-                        ),
-                        backend=SGLangProtocol(
-                            prefill_environment={
-                                # Mix of supported and unsupported placeholders
-                                "CACHE_DIR": "/cache/{node_id}/data",
-                                "UNSUPPORTED": "/path/{foo}/bar/{baz}",
-                                "MIXED": "{node}-{unsupported_var}-cache",
-                            },
-                        ),
-                    )
+        with (
+            patch.dict(os.environ, slurm_env),
+            patch("subprocess.run", mock_scontrol),
+            patch("srtctl.core.slurm.get_hostname_ip", return_value="10.0.0.1"),
+        ):
+            # Create config with unsupported template placeholders
+            config = SrtConfig(
+                name="test",
+                model=ModelConfig(
+                    path=str(model_path),
+                    container=str(container_path),
+                    precision="fp8",
+                ),
+                resources=ResourceConfig(
+                    gpu_type="h100",
+                    gpus_per_node=8,
+                    prefill_nodes=1,
+                    decode_nodes=1,
+                ),
+                backend=SGLangProtocol(
+                    prefill_environment={
+                        # Mix of supported and unsupported placeholders
+                        "CACHE_DIR": "/cache/{node_id}/data",
+                        "UNSUPPORTED": "/path/{foo}/bar/{baz}",
+                        "MIXED": "{node}-{unsupported_var}-cache",
+                    },
+                ),
+            )
 
-                    runtime = RuntimeContext.from_config(config, job_id="12345")
+            runtime = RuntimeContext.from_config(config, job_id="12345")
 
-                    class MockWorkerStage(WorkerStageMixin):
-                        def __init__(self, config, runtime):
-                            self.config = config
-                            self.runtime = runtime
+            class MockWorkerStage(WorkerStageMixin):
+                def __init__(self, config, runtime):
+                    self.config = config
+                    self.runtime = runtime
 
-                    worker_stage = MockWorkerStage(config, runtime)
+            worker_stage = MockWorkerStage(config, runtime)
 
-                    process = Process(
-                        node="gpu-01",
-                        gpu_indices=frozenset([0, 1, 2, 3, 4, 5, 6, 7]),
-                        sys_port=8081,
-                        http_port=30000,
-                        endpoint_mode="prefill",
-                        endpoint_index=0,
-                        node_rank=0,
-                    )
+            process = Process(
+                node="gpu-01",
+                gpu_indices=frozenset([0, 1, 2, 3, 4, 5, 6, 7]),
+                sys_port=8081,
+                http_port=30000,
+                endpoint_mode="prefill",
+                endpoint_index=0,
+                node_rank=0,
+            )
 
-                    # Mock backend command builder and srun process to capture environment variables
-                    mock_backend = MagicMock()
-                    mock_backend.get_environment_for_mode.side_effect = config.backend.get_environment_for_mode
-                    mock_backend.build_worker_command.return_value = ["echo", "test"]
+            # Mock backend command builder and srun process to capture environment variables
+            mock_backend = MagicMock()
+            mock_backend.get_environment_for_mode.side_effect = config.backend.get_environment_for_mode
+            mock_backend.build_worker_command.return_value = ["echo", "test"]
 
-                    with patch.object(worker_stage, "config") as mock_config:
-                        mock_config.backend = mock_backend
-                        mock_config.profiling = config.profiling
+            with (
+                patch.object(worker_stage, "config") as mock_config,
+                patch("srtctl.cli.mixins.worker_stage.start_srun_process") as mock_srun,
+            ):
+                mock_config.backend = mock_backend
+                mock_config.profiling = config.profiling
+                mock_srun.return_value = MagicMock()
 
-                        with patch("srtctl.cli.mixins.worker_stage.start_srun_process") as mock_srun:
-                            mock_srun.return_value = MagicMock()
+                # This should NOT throw an error
+                worker_stage.start_worker(process, [])
+                call_kwargs = mock_srun.call_args.kwargs
+                env_vars = call_kwargs.get("env_to_set", {})
 
-                            # This should NOT throw an error
-                            worker_stage.start_worker(process, [])
-                            call_kwargs = mock_srun.call_args.kwargs
-                            env_vars = call_kwargs.get("env_to_set", {})
+                # Supported placeholder should be replaced
+                assert env_vars["CACHE_DIR"] == "/cache/0/data"
 
-                            # Supported placeholder should be replaced
-                            assert env_vars["CACHE_DIR"] == "/cache/0/data"
+                # Unsupported placeholders should remain unchanged
+                assert env_vars["UNSUPPORTED"] == "/path/{foo}/bar/{baz}"
 
-                            # Unsupported placeholders should remain unchanged
-                            assert env_vars["UNSUPPORTED"] == "/path/{foo}/bar/{baz}"
-
-                            # Mixed case: supported replaced, unsupported kept
-                            assert env_vars["MIXED"] == "gpu-01-{unsupported_var}-cache"
+                # Mixed case: supported replaced, unsupported kept
+                assert env_vars["MIXED"] == "gpu-01-{unsupported_var}-cache"
 
 
 class TestInfraConfig:
@@ -878,9 +1249,11 @@ class TestNodesInfraAllocation:
 
         from srtctl.core.runtime import Nodes
 
-        with patch("srtctl.core.runtime.get_slurm_nodelist", return_value=["node0"]):
-            with pytest.raises(ValueError, match="at least 2 nodes"):
-                Nodes.from_slurm(etcd_nats_dedicated_node=True)
+        with (
+            patch("srtctl.core.runtime.get_slurm_nodelist", return_value=["node0"]),
+            pytest.raises(ValueError, match="at least 2 nodes"),
+        ):
+            Nodes.from_slurm(etcd_nats_dedicated_node=True)
 
 
 class TestSbatchNodeCount:
@@ -1439,8 +1812,6 @@ class TestVLLMDataParallelMode:
 
     def test_connector_custom_json_passthrough(self):
         """connector set to a raw JSON string is passed through as-is."""
-        import json
-
         custom = '{"kv_connector":"MyCustomConnector","kv_role":"kv_both"}'
         cmd = self._build_cmd_with_connector(custom)
         idx = cmd.index("--kv-transfer-config")
@@ -1498,6 +1869,53 @@ class TestVLLMDataParallelMode:
         assert "--disaggregation-mode" not in cmd
         assert "--is-prefill-worker" not in cmd
         assert "--is-decode-worker" not in cmd
+
+    def test_vllm_config_replaces_runtime_placeholders_inside_json(self):
+        """Known runtime placeholders are replaced without treating JSON braces as format syntax."""
+        import json
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from srtctl.backends import VLLMProtocol, VLLMServerConfig
+        from srtctl.core.topology import Process
+
+        kv_transfer_config = (
+            '{"kv_connector":"DynamoConnector","kv_role":"kv_both",'
+            '"kv_connector_module_path":"kvbm.v2.vllm.connector",'
+            '"kv_connector_extra_config":{"leader":{"hub":{"url":"http://{infra_node_ip}:1337"}}}}'
+        )
+        backend = VLLMProtocol(
+            connector="none",
+            vllm_config=VLLMServerConfig(aggregated={"kv-transfer-config": kv_transfer_config}),
+        )
+        process = Process(
+            node="node0",
+            gpu_indices=frozenset([0, 1]),
+            sys_port=8081,
+            http_port=30000,
+            endpoint_mode="agg",
+            endpoint_index=0,
+            node_rank=0,
+        )
+        runtime = MagicMock()
+        runtime.model_path = Path("/model")
+        runtime.is_hf_model = False
+        runtime.infra_node_ip = "10.10.0.7"
+        runtime.head_node_ip = "10.10.0.8"
+        runtime.nodes.infra = "node0"
+        runtime.nodes.head = "node0"
+        runtime.job_id = "12345"
+        runtime.run_name = "run"
+        runtime.log_dir = Path("/logs")
+        runtime.container_image = Path("/container.sqsh")
+        runtime.gpus_per_node = 2
+
+        with patch("srtctl.core.slurm.get_hostname_ip", return_value="10.10.0.9"):
+            cmd = backend.build_worker_command(process=process, endpoint_processes=[process], runtime=runtime)
+
+        idx = cmd.index("--kv-transfer-config")
+        parsed = json.loads(cmd[idx + 1])
+        assert parsed["kv_connector_extra_config"]["leader"]["hub"]["url"] == "http://10.10.0.7:1337"
 
 
 class TestHuggingFaceModelSupport:
@@ -1649,9 +2067,11 @@ class TestHuggingFaceModelSupport:
         runtime = self._make_runtime(is_hf=True)
         runtime.log_dir = Path("/tmp/test-logs")
 
-        with patch("pathlib.Path.write_text"):
-            with patch("srtctl.core.slurm.get_hostname_ip", return_value="10.0.0.1"):
-                cmd = backend.build_worker_command(process=process, endpoint_processes=[process], runtime=runtime)
+        with (
+            patch("pathlib.Path.write_text"),
+            patch("srtctl.core.slurm.get_hostname_ip", return_value="10.0.0.1"),
+        ):
+            cmd = backend.build_worker_command(process=process, endpoint_processes=[process], runtime=runtime)
 
         idx = cmd.index("--model-path")
         assert cmd[idx + 1] == "facebook/opt-125m"
@@ -1668,9 +2088,11 @@ class TestHuggingFaceModelSupport:
         runtime = self._make_runtime(is_hf=False)
         runtime.log_dir = Path("/tmp/test-logs")
 
-        with patch("pathlib.Path.write_text"):
-            with patch("srtctl.core.slurm.get_hostname_ip", return_value="10.0.0.1"):
-                cmd = backend.build_worker_command(process=process, endpoint_processes=[process], runtime=runtime)
+        with (
+            patch("pathlib.Path.write_text"),
+            patch("srtctl.core.slurm.get_hostname_ip", return_value="10.0.0.1"),
+        ):
+            cmd = backend.build_worker_command(process=process, endpoint_processes=[process], runtime=runtime)
 
         idx = cmd.index("--model-path")
         assert cmd[idx + 1] == "/model"
